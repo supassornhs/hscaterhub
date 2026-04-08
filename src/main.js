@@ -630,7 +630,6 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
       document.getElementById('add-menu-form').dataset.editingId = id;
       document.getElementById('menu-category').value = item.category || '';
       document.getElementById('menu-name').value = item.title || '';
-      document.getElementById('menu-aliases').value = item.aliases ? item.aliases.join(', ') : '';
       document.getElementById('menu-desc').value = item.desc || '';
       document.getElementById('menu-price').value = item.standardPrice || '';
       document.getElementById('menu-ingredient').value = item.ingredient || '';
@@ -971,7 +970,6 @@ addMenuForm.addEventListener('submit', async (e) => {
 
   const payload = {
     title: document.getElementById('menu-name').value,
-    aliases: document.getElementById('menu-aliases').value.split(',').map(s => s.trim()).filter(s => s.length > 0),
     desc: document.getElementById('menu-desc').value,
     category: document.getElementById('menu-category').value,
     standardPrice: document.getElementById('menu-price').value,
