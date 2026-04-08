@@ -538,7 +538,7 @@ document.getElementById('save-new-menu-btn')?.addEventListener('click', async ()
 
 // Crawler Configurations UI
 let crawlerConfigs = {};
-const PLATFORMS_TO_TRACK = ['ezCater', 'DoorDash', 'ClubFeast', 'Cater2.me', 'Forkable', 'Email Source'];
+const PLATFORMS_TO_TRACK = ['ezCater', 'ClubFeast', 'Cater2.me', 'Email Source'];
 
 onSnapshot(doc(db, 'system', 'crawlers'), (docSnap) => {
   if (docSnap.exists()) {
@@ -567,8 +567,8 @@ function renderCrawlerConfigs() {
            <span style="font-size: 0.8rem; font-weight: bold; color: ${statColor}; background: rgba(255,255,255,0.1); padding: 0.2rem 0.6rem; border-radius: 12px;">${data.status}</span>
          </div>
          <div style="margin-bottom: 0.5rem;">
-           <label style="display: block; font-size: 0.75rem; color: #9ca3af; margin-bottom: 0.25rem;">Authorization Token / Cookie</label>
-           <input type="text" id="crawler-cookie-${plat.replace(/\s+/g,'-')}" value="${data.cookie || ''}" placeholder="Paste raw cookie string here..." style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #f8fafc; padding: 0.5rem; border-radius: 4px;" />
+           <label style="display: block; font-size: 0.75rem; color: #9ca3af; margin-bottom: 0.25rem;">${plat === 'Email Source' ? 'Email Address, App Password (Optional)' : 'Authorization Token / Cookie'}</label>
+           <input type="text" id="crawler-cookie-${plat.replace(/\s+/g,'-')}" value="${data.cookie || ''}" placeholder="${plat === 'Email Source' ? 'e.g. supassorn@holyshred.co, password123' : 'Paste raw cookie string here...'}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #f8fafc; padding: 0.5rem; border-radius: 4px;" />
          </div>
          ${data.lastRun ? '<div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 1rem;">Last checked: ' + data.lastRun + '</div>' : '<div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 1rem;">Never run</div>'}
          <button class="secondary-btn" onclick="saveCrawlerConfig('${plat}')" style="width: 100%; font-size: 0.8rem;">Update Connection</button>

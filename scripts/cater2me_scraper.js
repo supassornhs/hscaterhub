@@ -33,6 +33,7 @@ const pdfExtractor = new PDFExtract();
 
         if (res.status === 401 || res.status === 403 || res.redirected) {
             console.error("❌ Cater2.me authentication failed! Cookie expired.");
+            await setDoc(doc(db, 'system', 'crawlers'), { 'Cater2.me': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
             process.exit(1);
         }
 
@@ -245,6 +246,7 @@ const pdfExtractor = new PDFExtract();
             await new Promise(r => setTimeout(r, 800));
         }
         
+        await setDoc(doc(db, 'system', 'crawlers'), { 'Cater2.me': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
         console.log(`\n🎉 Total 100% Native Automated Extraction Complete! Data synchronized!`);
         process.exit(0);
         

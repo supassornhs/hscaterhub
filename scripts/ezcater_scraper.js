@@ -69,6 +69,7 @@ const db = getFirestore(app);
 
     if (!ordersData || ordersData.error || (ordersData[0] && ordersData[0].errors)) {
         console.error("❌ ezCater authentication failed or GraphQL error!", ordersData);
+        await setDoc(doc(db, 'system', 'crawlers'), { 'ezCater': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
         await browser.close();
         process.exit(1);
     }
@@ -152,7 +153,9 @@ const db = getFirestore(app);
         synced++;
     }
 
-    console.log(`\n🎉 Success! Synchronized ${synced} ezCater orders to the Hub!`);
+    await setDoc(doc(db, 'system', 'crawlers'), { 'ezCater': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
+
+    console.log(`\n🎉 Processed ${synced} ezCater orders. System Shutdown.`);
     await browser.close();
     process.exit(0);
 })();

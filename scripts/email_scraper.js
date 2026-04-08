@@ -352,6 +352,7 @@ async function run() {
 
     if(!emailUser) {
         console.error("Missing EMAIL_USER or EMAIL_APP_PASSWORD! Run halted.");
+        await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
         process.exit(1);
     }
 
@@ -397,7 +398,13 @@ async function run() {
                 process.exit(0);
             });
         });
-    }).catch(console.error);
+    }).catch(async err => {
+        console.error("Authentication Error: ", err);
+        await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+        process.exit(1);
+    });
 }
 
-run();
+run().then(async () => {
+    await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
+});

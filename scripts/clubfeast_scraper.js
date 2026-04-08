@@ -76,8 +76,9 @@ const AUTH_FILE = './clubfeast_auth.json';
   
     if (bodyText.includes('Sign in') || bodyText.includes('Verification Code')) {
         console.log("\n❌ FATAL ERROR: The Cookie is missing or expired.");
+        await setDoc(doc(db, 'system', 'crawlers'), { 'ClubFeast': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
         await browser.close();
-        return;
+        process.exit(1);
     }
   
     console.log("\n🔍 Logging in successful! Preparing deep-link Order Extraction...");
@@ -297,12 +298,15 @@ const AUTH_FILE = './clubfeast_auth.json';
             }
             await setDoc(docRef, newOrder, { merge: true });
             console.log(`   └─ Successfully saved ${newOrder.id} with status ${newOrder.status}`);
+            syncedOrders++;
         } else {
             console.log("   └─ Failed to isolate order frame. Skipping.");
         }
     }
-  
-    console.log("\n🎯 ClubFeast Scrape Mission Accomplished!");
+    
+    await setDoc(doc(db, 'system', 'crawlers'), { 'ClubFeast': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
+
+    console.log(`\n🎉 Successfully Synced ${syncedOrders} ClubFeast orders to the Hub!`);
     await browser.close();
     process.exit(0);
 })();
