@@ -729,6 +729,7 @@ onSnapshot(collection(db, 'orders'), (snapshot) => {
   const currentFilter = document.getElementById('orders-platform-filter')?.value || 'all';
   renderOrders(currentFilter);
   renderDashboard();
+  if (typeof renderPrepTab === 'function') renderPrepTab();
   
   if (calendarObj) {
     calendarObj.removeAllEvents();
@@ -745,6 +746,7 @@ onSnapshot(collection(db, 'menus'), (snapshot) => {
   menuItems = snapshot.docs.map(doc => ({ fbId: doc.id, ...doc.data() }));
   const filterEl = document.getElementById('category-filter');
   renderMenus(filterEl ? filterEl.value : 'all');
+  if (typeof renderPrepTab === 'function') renderPrepTab();
   
   let dl = document.getElementById('menu-items-global-list');
   if (!dl) {
@@ -1074,7 +1076,181 @@ if (allergensInput) {
       console.log('Seeding mock menus...');
       MOCK_MENUS.forEach(m => addDoc(collection(db, 'menus'), m));
     }
-  } catch (err) {
+    } catch (err) {
     console.error('Failed to seed database. Are Firestore Security Rules set to true? Error:', err);
   }
 })();
+
+// ==== PREP TAB LOGIC ====
+
+// Initialize Date Picker to today in local Pacific Time securely
+const tzDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+document.getElementById('prep-date-filter').value = tzDate;
+
+let currentPrepView = 'dish'; // 'dish' or 'comp'
+
+document.getElementById('prep-view-dish')?.addEventListener('click', (e) => {
+    currentPrepView = 'dish';
+    e.target.classList.add('active');
+    e.target.style.background = 'var(--primary-accent)';
+    e.target.style.color = 'white';
+    
+    let sibling = document.getElementById('prep-view-comp');
+    sibling.classList.remove('active');
+    sibling.style.background = 'transparent';
+    sibling.style.color = 'var(--text-secondary)';
+    
+    document.getElementById('prep-dish-container').style.display = 'block';
+    document.getElementById('prep-comp-container').style.display = 'none';
+    renderPrepTab();
+});
+
+document.getElementById('prep-view-comp')?.addEventListener('click', (e) => {
+    currentPrepView = 'comp';
+    e.target.classList.add('active');
+    e.target.style.background = 'var(--primary-accent)';
+    e.target.style.color = 'white';
+    
+    let sibling = document.getElementById('prep-view-dish');
+    sibling.classList.remove('active');
+    sibling.style.background = 'transparent';
+    sibling.style.color = 'var(--text-secondary)';
+    
+    document.getElementById('prep-dish-container').style.display = 'none';
+    document.getElementById('prep-comp-container').style.display = 'block';
+    renderPrepTab();
+});
+
+document.getElementById('prep-date-filter')?.addEventListener('change', renderPrepTab);
+
+function renderPrepTab() {
+    if (!orders || !menuItems) return;
+    
+    const dateInput = document.getElementById('prep-date-filter').value;
+    if (!dateInput) return; // Wait for user to select a date
+
+    // Get order matching the date
+    const targetOrders = orders.filter(o => {
+        if (!o.deliveryDate) return false;
+        // Match YYYY-MM-DD prefix purely
+        return o.deliveryDate.startsWith(dateInput);
+    });
+
+    let dishMap = {}; // { "Shredded Chicken Noodle": { qty: 2, servings: 2, menuRef: {...} } }
+
+    targetOrders.forEach(o => {
+        if (o.items && Array.isArray(o.items)) {
+            o.items.forEach(itm => {
+                let name = itm.name ? itm.name.trim() : "Unknown Dish";
+                let q = parseInt(itm.quantity) || 1;
+                
+                if (!dishMap[name]) dishMap[name] = { qty: 0, servings: 0, menuRef: null };
+                dishMap[name].qty += q;
+            });
+        }
+    });
+
+    // Resolve menu bindings to compute pure servings
+    Object.keys(dishMap).forEach(dishName => {
+        let cleanName = dishName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let menuMatch = menuItems.find(m => {
+            if (m.title.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanName) return true;
+            if (m.overrides) {
+                for (let plat of Object.keys(m.overrides)) {
+                   if (m.overrides[plat] && m.overrides[plat].alias && m.overrides[plat].alias.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanName) {
+                       return true;
+                   }
+                }
+            }
+            return false;
+        });
+
+        if (menuMatch) {
+            dishMap[dishName].menuRef = menuMatch;
+            let servMult = parseInt(menuMatch.serving) || 1;
+            dishMap[dishName].servings = dishMap[dishName].qty * servMult;
+        } else {
+            dishMap[dishName].servings = dishMap[dishName].qty; // Default 1:1 if unknown
+        }
+    });
+
+    if (currentPrepView === 'dish') {
+        const tbody = document.getElementById('prep-dish-tbody');
+        let html = '';
+        const sortedDishes = Object.keys(dishMap).sort((a,b) => dishMap[b].qty - dishMap[a].qty);
+        
+        sortedDishes.forEach(d => {
+            html += `<tr>
+                <td style="padding-left: 1rem; color: #f8fafc;">${d} ${dishMap[d].menuRef ? '' : '<span style="color: #fbbf24; font-size: 0.65rem; margin-left: 0.5rem; border: 1px solid #fbbf24; padding: 2px 4px; border-radius: 4px;">Unlinked</span>'}</td>
+                <td style="text-align: right; color: #9ca3af;">${dishMap[d].qty}</td>
+                <td style="text-align: right; padding-right: 1rem; color: #6ee7b7; font-weight: bold;">${dishMap[d].servings}</td>
+            </tr>`;
+        });
+        
+        if (sortedDishes.length === 0) {
+            html = `<tr><td colspan="3" style="text-align: center; color: #64748b; padding: 2rem;">No orders matched the selected date.</td></tr>`;
+        }
+        tbody.innerHTML = html;
+        
+    } else {
+        const container = document.getElementById('prep-comp-grids');
+        let compGroups = {
+            'Proteins': {},
+            'Base': {},
+            'Toppings': {},
+            'Sauce': {}
+        };
+
+        Object.keys(dishMap).forEach(d => {
+            let item = dishMap[d];
+            if (item.menuRef) {
+                let servs = item.servings;
+                
+                if (item.menuRef.proteins) {
+                    if (!compGroups['Proteins'][item.menuRef.proteins]) compGroups['Proteins'][item.menuRef.proteins] = 0;
+                    compGroups['Proteins'][item.menuRef.proteins] += servs;
+                }
+                if (item.menuRef.base) {
+                    if (!compGroups['Base'][item.menuRef.base]) compGroups['Base'][item.menuRef.base] = 0;
+                    compGroups['Base'][item.menuRef.base] += servs;
+                }
+                if (item.menuRef.toppings) {
+                    if (!compGroups['Toppings'][item.menuRef.toppings]) compGroups['Toppings'][item.menuRef.toppings] = 0;
+                    compGroups['Toppings'][item.menuRef.toppings] += servs;
+                }
+                if (item.menuRef.sauce) {
+                    if (!compGroups['Sauce'][item.menuRef.sauce]) compGroups['Sauce'][item.menuRef.sauce] = 0;
+                    compGroups['Sauce'][item.menuRef.sauce] += servs;
+                }
+            }
+        });
+
+        let html = '';
+        Object.keys(compGroups).forEach(groupName => {
+            let innerList = '';
+            let comps = Object.keys(compGroups[groupName]).sort((a,b) => compGroups[groupName][b] - compGroups[groupName][a]);
+            
+            comps.forEach(c => {
+                innerList += `
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <span style="color: #f8fafc;">${c}</span>
+                        <strong style="color: #6ee7b7;">${compGroups[groupName][c]}</strong>
+                    </div>
+                `;
+            });
+
+            if (comps.length === 0) {
+               innerList = `<div style="padding: 1rem; text-align: center; color: #64748b;">No components required.</div>`;
+            }
+
+            html += `
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; overflow: hidden;">
+                  <div style="background: rgba(0,0,0,0.2); padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.05); font-weight: 600; color: var(--primary-accent);">${groupName} <span style="float: right; color: #64748b; font-size: 0.7rem; font-weight: normal; margin-top: 3px;">SERVINGS</span></div>
+                  <div>${innerList}</div>
+              </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+}
+

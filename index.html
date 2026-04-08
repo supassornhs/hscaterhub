@@ -37,6 +37,10 @@
             <span class="icon">🍔</span>
             Menu Items
           </button>
+          <button class="nav-item" data-tab="prep">
+            <span class="icon">🔪</span>
+            Preparation
+          </button>
           <button class="nav-item" data-tab="crawlers">
             <span class="icon">🕷️</span>
             Crawlers
@@ -183,6 +187,40 @@
                   <!-- JS populates this -->
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- PREP TAB  -->
+        <section id="prep-tab" class="tab-content">
+          <div class="glass-panel" style="margin-top: 2rem;">
+            <div class="table-header-flex" style="align-items: center; justify-content: space-between; border-bottom: 1px solid var(--glass-border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
+              <div>
+                <h2 style="margin: 0; font-size: 1.5rem; font-weight: 600;">Prep Station</h2>
+                <p style="color: var(--text-secondary); margin-top: 0.25rem;">Calculate aggregate kitchen totals across platforms.</p>
+              </div>
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                <input type="date" id="prep-date-filter" style="background: var(--bg-tertiary); border: 1px solid var(--glass-border); color: white; padding: 0.5rem; border-radius: 8px;">
+                <div style="display: flex; background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: 8px; overflow: hidden;">
+                  <button id="prep-view-dish" class="prep-toggle-btn active" style="padding: 0.5rem 1rem; background: var(--primary-accent); border: none; color: white; cursor: pointer; font-weight: 600;">Dish View</button>
+                  <button id="prep-view-comp" class="prep-toggle-btn" style="padding: 0.5rem 1rem; background: transparent; border: none; color: var(--text-secondary); cursor: pointer; transition: 0.2s;">Component View</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dish View Content -->
+            <div id="prep-dish-container">
+              <table class="dashboard-table">
+                <thead><tr><th style="padding-left: 1rem;">Dish Name</th><th style="text-align: right;">Total Quantity</th><th style="text-align: right; padding-right: 1rem;">Total Servings</th></tr></thead>
+                <tbody id="prep-dish-tbody"></tbody>
+              </table>
+            </div>
+
+            <!-- Component View Content -->
+            <div id="prep-comp-container" style="display: none;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;" id="prep-comp-grids">
+                    <!-- Dynamic Component Cards injected here -->
+                </div>
             </div>
           </div>
         </section>
