@@ -3,6 +3,7 @@ import { getFirestore, collection, doc, setDoc, getDocs, getDoc } from "firebase
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
 import * as dotenv from 'dotenv';
+import { sendAlertEmail } from './mailer.js';
 dotenv.config();
 
 const firebaseConfig = {
@@ -404,6 +405,7 @@ async function run() {
     }).catch(async err => {
         console.error("Authentication Error: ", err);
         await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+        await sendAlertEmail(db, 'Email Source');
         process.exit(1);
     });
 }

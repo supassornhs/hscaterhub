@@ -3,6 +3,7 @@ import fs from 'fs';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDocs, getDoc } from "firebase/firestore";
 import * as dotenv from 'dotenv';
+import { sendAlertEmail } from './mailer.js';
 dotenv.config();
 
 const firebaseConfig = {
@@ -77,6 +78,7 @@ const AUTH_FILE = './clubfeast_auth.json';
     if (bodyText.includes('Sign in') || bodyText.includes('Verification Code')) {
         console.log("\n❌ FATAL ERROR: The Cookie is missing or expired.");
         await setDoc(doc(db, 'system', 'crawlers'), { 'ClubFeast': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+        await sendAlertEmail(db, 'ClubFeast');
         await browser.close();
         process.exit(1);
     }

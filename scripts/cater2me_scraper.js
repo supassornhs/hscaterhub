@@ -2,6 +2,7 @@ import * as dotenv from 'dotenv';
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import { PDFExtract } from 'pdf.js-extract';
+import { sendAlertEmail } from './mailer.js';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ const pdfExtractor = new PDFExtract();
         if (res.status === 401 || res.status === 403 || res.redirected) {
             console.error("❌ Cater2.me authentication failed! Cookie expired.");
             await setDoc(doc(db, 'system', 'crawlers'), { 'Cater2.me': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+            await sendAlertEmail(db, 'Cater2.me');
             process.exit(1);
         }
 

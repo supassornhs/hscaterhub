@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import * as dotenv from 'dotenv';
+import { sendAlertEmail } from './mailer.js';
 dotenv.config();
 
 const firebaseConfig = {
@@ -70,6 +71,7 @@ const db = getFirestore(app);
     if (!ordersData || ordersData.error || (ordersData[0] && ordersData[0].errors)) {
         console.error("❌ ezCater authentication failed or GraphQL error!", ordersData);
         await setDoc(doc(db, 'system', 'crawlers'), { 'ezCater': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+        await sendAlertEmail(db, 'ezCater');
         await browser.close();
         process.exit(1);
     }
