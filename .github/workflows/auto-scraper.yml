@@ -19,12 +19,21 @@ jobs:
       - name: Install Dependencies
         run: npm install
         
-      - name: Execute Background Platform Scrapers
+      - name: Run Email Scraper
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-        run: |
-          node scripts/email_scraper.js
-          node scripts/ezcater_scraper.js
-          node scripts/clubfeast_scraper.js
-          node scripts/cater2me_scraper.js
+        run: node scripts/email_scraper.js
+        continue-on-error: true
+
+      - name: Run ezCater Scraper
+        run: node scripts/ezcater_scraper.js
+        continue-on-error: true
+
+      - name: Run ClubFeast Scraper
+        run: node scripts/clubfeast_scraper.js
+        continue-on-error: true
+
+      - name: Run Cater2Me Scraper
+        run: node scripts/cater2me_scraper.js
+        continue-on-error: true
