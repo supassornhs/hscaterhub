@@ -1,4 +1,4 @@
-name: Automated Email Order Scraper 
+name: Master Catering Dashboard Sync
 
 on:
   schedule:
