@@ -153,6 +153,7 @@ const AUTH_FILE = './clubfeast_auth.json';
         menuItemsMap.sort((a,b) => b.title.length - a.title.length);
     } catch(e) {}
   
+    let syncedOrders = 0;
     for (let i = 0; i < finalLinks.length; i++) {
         let route = finalLinks[i];
         console.log(`[${i+1}/${finalLinks.length}] Navigating into ${route}...`);
