@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HSCaterHub | Catering Dashboard</title>
+    <meta name="description" content="Centralized dashboard for all catering orders across platforms." />
+    <!-- Google Fonts: Inter and Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/index.css" />
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar">
+        <div class="logo-container">
+          <div class="logo-icon"></div>
+          <h1 class="logo-text">HSCaterHub</h1>
+        </div>
+        <nav class="nav-menu">
+          <button class="nav-item" data-tab="dashboard">
+            <span class="icon">📊</span>
+            Dashboard
+          </button>
+          <button class="nav-item active" data-tab="orders">
+            <span class="icon">📦</span>
+            All Orders
+          </button>
+          <button class="nav-item" data-tab="calendar">
+            <span class="icon">📅</span>
+            Calendar
+          </button>
+          <button class="nav-item" data-tab="menus">
+            <span class="icon">🍔</span>
+            Menu Items
+          </button>
+          <button class="nav-item" data-tab="crawlers">
+            <span class="icon">🕷️</span>
+            Crawlers
+          </button>
+        </nav>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <section id="dashboard-tab" class="tab-content">
+          <div class="glass-panel" style="margin-top: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>Catering Performance Dashboard</h3>
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                <label style="color: #9ca3af; font-size: 0.85rem;">From:</label>
+                <input type="date" id="dash-start-date" style="padding: 0.5rem; border-radius: 8px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: var(--text-primary); font-family: 'Inter', sans-serif;" />
+                <label style="color: #9ca3af; font-size: 0.85rem;">To:</label>
+                <input type="date" id="dash-end-date" style="padding: 0.5rem; border-radius: 8px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: var(--text-primary); font-family: 'Inter', sans-serif;" />
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1.5rem;">
+               <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                 <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Orders</div>
+                 <div id="dash-total-orders" style="font-size: 2rem; font-weight: 600; color: #6ee7b7; margin-top: 0.5rem;">0</div>
+               </div>
+               <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                 <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Order Amount</div>
+                 <div id="dash-total-amount" style="font-size: 2rem; font-weight: 600; color: #6ee7b7; margin-top: 0.5rem;">$0.00</div>
+               </div>
+               <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                 <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Total Net Payout</div>
+                 <div id="dash-net-payout" style="font-size: 2rem; font-weight: 600; color: #6ee7b7; margin-top: 0.5rem;">$0.00</div>
+               </div>
+               <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                 <div style="font-size: 0.8rem; color: #9ca3af; text-transform: uppercase;">Avg Net Payout / Day</div>
+                 <div id="dash-avg-payout" style="font-size: 2rem; font-weight: 600; color: #6ee7b7; margin-top: 0.5rem;">$0.00</div>
+               </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 2rem;">
+              <div style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                <h4 style="margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Most Popular Dishes</h4>
+                <div id="dash-popular-dishes" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                  <!-- JS Populated -->
+                </div>
+              </div>
+              <div style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                <h4 style="margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Platform Breakdown</h4>
+                <div id="dash-platform-breakdown" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                   <!-- JS Populated -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="orders-tab" class="tab-content active">
+          <div class="data-table-container glass-panel" style="margin-top: 2rem;">
+            <div class="table-header-flex" style="align-items: center;">
+              <h3>Recent Catering Orders</h3>
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                <select id="orders-platform-filter" style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: var(--text-primary); font-family: 'Inter', sans-serif;">
+                  <option value="all">All Platforms</option>
+                  <option value="Cater2.ME">Cater2.ME</option>
+                  <option value="ClubFeast">ClubFeast</option>
+                  <option value="Direct">Direct</option>
+                  <option value="DoorDash">DoorDash</option>
+                  <option value="ezCater">ezCater</option>
+                  <option value="Forkable">Forkable</option>
+                  <option value="Uber Eats">Uber Eats</option>
+                </select>
+                <button id="add-order-btn" class="primary-btn">+ Add Order</button>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table id="orders-table">
+                <thead>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>Platform</th>
+                    <th>Customer Name</th>
+                    <th>Delivery Date</th>
+                    <th>Delivery Method</th>
+                    <th>Items</th>
+                    <th>Payout</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="orders-tbody">
+                  <!-- JS populates this -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="calendar-tab" class="tab-content">
+          <div class="glass-panel" style="margin-top: 2rem;">
+            <h3>Catering Delivery Calendar</h3>
+            <div id="calendar" style="margin-top: 1.5rem; min-height: 600px;"></div>
+          </div>
+        </section>
+
+        <section id="menus-tab" class="tab-content">
+          <div class="glass-panel">
+            <div class="table-header-flex">
+              <h3>Platform Menus</h3>
+              <button id="add-menu-btn" class="primary-btn">+ Add Menu</button>
+            </div>
+            <div class="filters">
+              <select id="category-filter">
+                <option value="all">All Categories</option>
+                <option value="individualbox">Individual Box</option>
+                <option value="tray">Tray</option>
+                <option value="sauce">Sauce</option>
+                <option value="beverage">Beverage</option>
+              </select>
+            </div>
+            <div class="table-container" style="margin-top: 1.5rem;">
+              <table class="dashboard-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Menu Name</th>
+                    <th>Standard Price</th>
+                    <th>Base & Proteins</th>
+                    <th>Weight (g)</th>
+                    <th>Spicy Level</th>
+                    <th>Vegan</th>
+                    <th>Veg</th>
+                    <th>GF</th>
+                    <th>Soy Free</th>
+                    <th>Nut Free</th>
+                    <th>Dairy Free</th>
+                    <th>Egg Free</th>
+                    <th>Sesame Free</th>
+                    <th>Shellfish Free</th>
+                    <th>Seafood Free</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="menu-table-body">
+                  <!-- JS populates this -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="crawlers-tab" class="tab-content" style="padding-top: 3rem;">
+           <div class="glass-panel" style="margin-bottom: 2rem;">
+             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+               <div>
+                 <h3 style="margin-bottom: 0.5rem;">Crawler Configurations</h3>
+                 <p style="margin: 0; color: #9ca3af;">Manage your platform connections, update session cookies when they expire, and monitor the health of your background scraper jobs.</p>
+               </div>
+               <button id="force-sync-btn" class="primary-btn" style="margin: 0; white-space: nowrap; font-size: 0.9rem;">Refresh Immediately</button>
+             </div>
+             <div id="crawlers-configs-container" class="form-grid" style="gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
+                <!-- JS populates crawler blocks -->
+             </div>
+           </div>
+
+        </section>
+      </main>
+    </div>
+
+    <!-- Order Details Slide-out Panel -->
+    <div id="order-modal-overlay" class="modal-overlay"></div>
+    <aside id="order-details-panel" class="details-panel glass-panel">
+      <button id="close-panel-btn" class="close-btn">&times;</button>
+      <div id="panel-content">
+        <!-- JS populates full details here -->
+      </div>
+    </aside>
+
+    <!-- Add Order Modal -->
+    <div id="add-order-modal" class="modal-overlay">
+      <div class="modal-content glass-panel">
+        <button id="close-add-order-btn" class="close-btn" type="button" style="top: 1rem; right: 1rem;">&times;</button>
+        <h3 style="margin-bottom: 1.5rem;">Add New Order</h3>
+        <form id="add-order-form">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Platform</label>
+              <select id="new-order-platform" required>
+                <option value="Cater2.me">Cater2.me</option>
+                <option value="ClubFeast">ClubFeast</option>
+                <option value="Direct">Direct</option>
+                <option value="DoorDash">DoorDash</option>
+                <option value="ezCater">ezCater</option>
+                <option value="Fooda">Fooda</option>
+                <option value="Foodja">Foodja</option>
+                <option value="Forkable">Forkable</option>
+                <option value="Uber Eats">Uber Eats</option>
+                <option value="Zerocater">Zerocater</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Order ID</label>
+              <input type="text" id="new-order-id" placeholder="#ORD-XXXX" required />
+            </div>
+            <div class="form-group">
+              <label>Type of Order</label>
+              <select id="new-order-type" required>
+                <option value="Catering">Catering</option>
+                <option value="Meal Manager">Meal Manager</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Customer Name</label>
+              <input type="text" id="new-order-customer" required />
+            </div>
+            <div class="form-group">
+              <label>Delivery Date (SF)</label>
+              <input type="date" id="new-order-date" required />
+            </div>
+            <div class="form-group">
+              <label>Delivery Time (SF)</label>
+              <input type="time" id="new-order-time" required />
+            </div>
+            <div class="form-group">
+              <label>Delivery Method</label>
+              <select id="new-order-method" required>
+                <option value="Platform">Platform</option>
+                <option value="Third-Party">Third-Party</option>
+                <option value="HolyShred">HolyShred</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Pick Up Time</label>
+              <input type="time" id="new-order-pickup" />
+            </div>
+            <div style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem;">
+              <div class="form-group">
+                <label>Subtotal ($)</label>
+                <input type="number" step="0.01" id="new-order-subtotal" required />
+              </div>
+              <div class="form-group">
+                <label>Total ($)</label>
+                <input type="number" step="0.01" id="new-order-total" required />
+              </div>
+              <div class="form-group">
+                <label>Net Payout ($)</label>
+                <input type="number" step="0.01" id="new-order-payout" required />
+              </div>
+            </div>
+          </div>
+          
+          <div class="form-section-header" style="margin-top: 1.5rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="margin: 0;">Items</h4>
+            <button type="button" id="add-item-row-btn" class="secondary-btn" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">+ Add Item</button>
+          </div>
+          
+          <div id="new-order-items-container">
+            <!-- JS dynamic rows -->
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <label>Overall Notes</label>
+            <textarea id="new-order-notes" rows="2" style="width: 100%; border-radius: 8px; padding: 0.5rem; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--glass-border);"></textarea>
+          </div>
+
+          <div style="margin-top: 2rem; text-align: right;">
+            <button type="submit" class="primary-btn" style="margin: 0;">Save Order</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Menu Modal -->
+    <div id="add-menu-modal" class="modal-overlay">
+      <div class="modal-content glass-panel" style="max-height: 90vh; max-width: 1200px;">
+        <button id="close-add-menu-btn" class="close-btn" type="button" style="top: 1rem; right: 1rem;">&times;</button>
+        <h3 style="margin-bottom: 1.5rem;">Add New Menu Item</h3>
+        <form id="add-menu-form">
+          <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 2rem;">
+            <!-- Left Column: Core Data -->
+            <div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Category</label>
+              <input type="text" id="menu-category" />
+            </div>
+            <div class="form-group">
+              <label>Menu (Name)</label>
+              <input type="text" id="menu-name" required />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>External Aliases (comma-separated)</label>
+              <input type="text" id="menu-aliases" placeholder="e.g. Shredded Chicken, Pad Thai (Special Name)..." />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>Description</label>
+              <textarea id="menu-desc" rows="2" style="width: 100%; border-radius: 8px; padding: 0.5rem; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--glass-border);"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Ingredient</label>
+              <input type="text" id="menu-ingredient" />
+            </div>
+            <div class="form-group">
+              <label>Allergen List</label>
+              <div class="tags-input-container">
+                <div id="allergen-tags-wrapper" class="tags-wrapper"></div>
+                <input type="text" id="menu-allergens-input" placeholder="Type & press Enter..." />
+              </div>
+              <input type="hidden" id="menu-allergens" />
+            </div>
+            <div class="form-group">
+              <label>Provided Toppings</label>
+              <input type="text" id="menu-toppings" />
+            </div>
+            <div class="form-group">
+              <label>Provided Sauce</label>
+              <input type="text" id="menu-sauce" />
+            </div>
+            <div class="form-group">
+              <label>Base</label>
+              <input type="text" id="menu-base" />
+            </div>
+            <div class="form-group">
+              <label>Proteins</label>
+              <input type="text" id="menu-proteins" />
+            </div>
+            <div class="form-group">
+              <label>Serving</label>
+              <input type="text" id="menu-serving" />
+            </div>
+            <div class="form-group">
+              <label>Standard Price ($)</label>
+              <input type="number" step="0.01" id="menu-price" />
+            </div>
+            <div style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem;">
+              <div class="form-group">
+                <label>Cooked Weights (grams)</label>
+                <input type="number" id="menu-weight-g" />
+              </div>
+              <div class="form-group">
+                <label>Cooked Weights (oz)</label>
+                <input type="number" step="0.01" id="menu-weight-oz" readonly style="background: rgba(255,255,255,0.05);" />
+              </div>
+              <div class="form-group">
+                <label>Cooked Weights (lbs)</label>
+                <input type="number" step="0.01" id="menu-weight-lbs" readonly style="background: rgba(255,255,255,0.05);" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Spicy Level</label>
+              <select id="menu-spicy">
+                <option value="0">0 (Not Spicy)</option>
+                <option value="1">1 (Mild)</option>
+                <option value="2">2 (Medium)</option>
+                <option value="3">3 (Hot)</option>
+              </select>
+            </div>
+          </div>
+          
+          <h4 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Dietary Preferences</h4>
+          <div class="checkbox-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-vegan"> Vegan</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-vegetarian"> Vegetarian</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-gf"> Gluten Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-soy"> Soy Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-sesame"> Sesame Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-nut"> Nut Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-dairy"> Dairy Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-egg"> Egg Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-shellfish"> Shell Fish Free</label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem;"><input type="checkbox" id="diet-seafood"> Seafood Free</label>
+          </div>
+          </div>
+          
+            <!-- Right Column: Platforms & Submit -->
+            <div>
+              <h4 style="margin-bottom: 0.5rem; margin-top: 0;">Platform Overrides</h4>
+              <div id="platform-details-container" style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
+                 <!-- JS will inject dynamic platform rows -->
+              </div>
+    
+              <div style="text-align: right; margin-top: auto;">
+                <button type="submit" class="primary-btn" style="margin: 0; width: 100%;">Save Menu</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+name: Automated Email Order Scraper 
+
+on:
+  schedule:
+    - cron: '15 * * * *' # Runs hourly at minute 15
+  workflow_dispatch: # Allows manual trigger from github UI
+
+jobs:
+  scrape_orders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+          
+      - name: Install Dependencies
+        run: npm install
+        
+      - name: Execute Background Platform Scrapers
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+        run: |
+          node scripts/email_scraper.js
+          node scripts/ezcater_scraper.js
+          node scripts/clubfeast_scraper.js
+          node scripts/cater2me_scraper.js

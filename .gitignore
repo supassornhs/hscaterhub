@@ -1,0 +1,5 @@
+node_modules
+.env
+clubfeast_auth.json
+dist
+.DS_Store

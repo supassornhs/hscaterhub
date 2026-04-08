@@ -1,0 +1,24 @@
+{
+  "name": "hscaterhub",
+  "version": "1.0.0",
+  "description": "HSCaterHub Web App",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "firebase": "^10.14.1",
+    "firebase-admin": "^11.11.0",
+    "imap-simple": "^5.1.0",
+    "mailparser": "^3.6.4",
+    "pdf.js-extract": "^0.2.1",
+    "puppeteer": "^24.40.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
