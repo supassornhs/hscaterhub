@@ -358,8 +358,11 @@ async function run() {
 
     imaps.connect(config).then(function (connection) {
         return connection.openBox('INBOX').then(function () {
+            // Dynamically look strictly at emails received only within the last 48 hours to minimize log spam
+            const lookbackDate = new Date();
+            lookbackDate.setDate(lookbackDate.getDate() - 2);
             const searchCriteria = [
-                ['SINCE', 'March 1, 2026'],
+                ['SINCE', lookbackDate],
                 ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]
             ];
             const fetchOptions = {
