@@ -50,11 +50,11 @@ async function processForkableEmail(text, htmlStr = "") {
     let locationMatch = text.match(/LOCATION\s*\n\s*(.+)/i) || text.match(/LOCATION:\s*(.+)/i) || ["", "Pickup Location"];
     let timeDriverMatch = text.match(/Pickup Time(?:\(s\))?:\s*(.+?)-(?:(?:\s*Driver\s*)(.+))?/i) || text.match(/Pickup Time(?:\(s\))?:\s*(.+)/i);
     let subtotalMatch = text.match(/Sub\s?Total\s*\$([0-9,.]+)/i);
-    let titleDateMatch = text.match(/Forkable Pickup\s+([a-zA-Z]+,?\s+[a-zA-Z]+\s+\d{1,2})\s+at\s+([0-9:]+[APM]+)/i);
+    let titleDateMatch = text.match(/Forkable Pickup(?: Date)?(?:\s+(.*?))?(?:\s+at)?\s+([0-9:]+[APM]{2})/i);
 
-    let rawDate = dateMatch ? (dateMatch[1] || dateMatch[0]) : (titleDateMatch ? titleDateMatch[1] : new Date().toDateString());
+    let rawDate = dateMatch ? (dateMatch[1] || dateMatch[0]) : (titleDateMatch && titleDateMatch[1] ? titleDateMatch[1] : new Date().toDateString());
     let cleanDate = new Date(rawDate);
-    if(isNaN(cleanDate.getTime()) && rawDate) {
+    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0) && rawDate) {
         cleanDate = new Date(`${rawDate} ${new Date().getFullYear()}`);
     }
 
@@ -358,7 +358,7 @@ async function run() {
     }
 
     imaps.connect(config).then(function (connection) {
-        return connection.openBox('INBOX').then(function () {
+        return connection.openBox('INBOX').then(async function () {
             // Dynamically look strictly at emails received only within the last 48 hours to minimize log spam
             const lookbackDate = new Date();
             lookbackDate.setDate(lookbackDate.getDate() - 2);
@@ -366,13 +366,27 @@ async function run() {
                 ['SINCE', lookbackDate],
                 ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]
             ];
+            // Also search for "Action Required" subjects which Forkable uses for add-ons
+            const searchCriteriaAdhoc = [
+                ['SINCE', lookbackDate],
+                ['OR', ['SUBJECT', 'Action Required'], ['SUBJECT', 'Confirm Changes']]
+            ];
             const fetchOptions = {
                 bodies: ['HEADER', 'TEXT', ''],
                 markSeen: false 
             };
 
             console.log("📡 Scanning Inbox for unread Delivery emails...");
-            return connection.search(searchCriteria, fetchOptions).then(async function (messages) {
+            try {
+                let msgs1 = await connection.search(searchCriteria, fetchOptions);
+                let msgs2 = await connection.search(searchCriteriaAdhoc, fetchOptions);
+                
+                // Merge and deduplicate by uid
+                let msgMap = new Map();
+                msgs1.forEach(m => msgMap.set(m.attributes.uid, m));
+                msgs2.forEach(m => msgMap.set(m.attributes.uid, m));
+                let messages = Array.from(msgMap.values());
+
                 if (messages.length === 0) {
                     console.log("✉️ Zero new unread delivery orders found in inbox.");
                 } else {
@@ -388,7 +402,7 @@ async function run() {
                         let bodyText = parsedMail.text || "";
                         let combinedText = subjectHeader + "\n\n" + bodyText;
 
-                        if (subjectHeader.toLowerCase().includes('forkable')) {
+                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('action required')) {
                             await processForkableEmail(combinedText, parsedMail.html);
                         } else if (subjectHeader.toLowerCase().includes('doordash') || subjectHeader.toLowerCase().includes('new catering order')) {
                             await processDoordashEmail(combinedText);
@@ -400,7 +414,11 @@ async function run() {
                 
                 connection.end();
                 process.exit(0);
-            });
+            } catch(e) {
+                console.error("Search Error: ", e);
+                connection.end();
+                process.exit(1);
+            }
         });
     }).catch(async err => {
         console.error("Authentication Error: ", err);

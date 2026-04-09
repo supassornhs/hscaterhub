@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore";
 import { PDFExtract } from 'pdf.js-extract';
 import { sendAlertEmail } from './mailer.js';
 
@@ -27,6 +27,11 @@ const pdfExtractor = new PDFExtract();
     }
 
     try {
+        console.log("👉 Fetching Menu Items for Mapping...");
+        const menuDocs = await getDocs(collection(db, 'menus'));
+        const menuItemsMap = menuDocs.docs.map(d => d.data());
+        menuItemsMap.sort((a,b) => b.title.length - a.title.length);
+
         console.log("👉 Validating Active Orders from Vendor Dashboard...");
         const res = await fetch("https://dashboard.cater2.me/vendor_app/orders", {
             headers: { "Cookie": CATER_COOKIE, "Accept": "application/json" }
@@ -53,7 +58,8 @@ const pdfExtractor = new PDFExtract();
                                type: o.type,
                                experience: o.experience,
                                day: dateObj.day,
-                               pdf_url: o.print_order_sheet_path,
+                               pdf_url: o.print_order_assets || o.print_order_sheet_path,
+                               addressObj: o.address,
                                menu: o.menu,
                                carts_count: o.carts_count
                            });
@@ -68,50 +74,112 @@ const pdfExtractor = new PDFExtract();
         for (let i = 0; i < validOrders.length; i++) {
             let o = validOrders[i];
             const order_Id_String = `#${o.original_id}`;
-            console.log(`\n[${i+1}/${validOrders.length}] 📥 Fetching Source PDF for ${order_Id_String}...`);
+
+            let isGroupOrdering = o.experience && o.experience.toLowerCase().includes('group');
+            let mappedType = isGroupOrdering ? "Group Ordering" : "Managed";
             
-            const pdfRes = await fetch(o.pdf_url, { headers: { "Cookie": CATER_COOKIE, "Accept": "*/*" } });
-            const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
-            const data = await pdfExtractor.extractBuffer(pdfBuffer, {});
-            
-            let text = "";
-            data.pages.forEach(page => {
-                let lastY = -1;
-                page.content.forEach(item => {
-                    if (lastY !== -1 && Math.abs(item.y - lastY) > 5) text += "\n";
-                    text += item.str + " ";
-                    lastY = item.y;
-                });
-                text += "\n";
-            });
+            let nowInSF = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+            let deliveryDateSF = new Date(o.day);
+            if (isNaN(deliveryDateSF.getTime())) {
+                deliveryDateSF = nowInSF; // fallback
+            }
 
-            let contactMatch = text.match(/CONTACT:\s*(.+)/);
-            let companyMatch = text.match(/COMPANY:\s*(.+)/);
-            let contact = contactMatch ? contactMatch[1].trim() : "";
-            let company = companyMatch ? companyMatch[1].trim() : "";
-            let customerName = `${contact} (${company})`.trim();
-            if (customerName === "()") customerName = "Cater2.ME User";
-
-            let setupTimeMatch = text.match(/Set-Up Completed By:\s*(.+)/);
-            let pickUpTime = setupTimeMatch ? setupTimeMatch[1].trim() : "N/A";
-
-            let addressMatch = text.match(/ADDRESS:([\s\S]+?)DELIVERY INSTRUCTIONS:/);
-            let addressArr = addressMatch ? addressMatch[1].trim().split('\n').map(l=>l.trim()).filter(l=>l) : [];
-            let address = addressArr.join(', ').replace(/\s{2,}/g, ' ');
-
-            let instructionsMatch = text.match(/DELIVERY INSTRUCTIONS:([\s\S]+?)(Order Instructions|Order Confirmation|Scheduled Order|Menu Preview)/i);
-            let instructions = instructionsMatch ? instructionsMatch[1].trim().replace(/\n/g, ' - ') : "N/A";
-
-            let mappedType = "Catering";
-            let subTotalNum = 0, taxNum = 0, totalNum = 0;
-            let itemsList = [];
-
-            if (o.experience && o.experience.toLowerCase().includes('group')) {
-                mappedType = "Meal Manager";
-                itemsList.push({ name: "Menu TBD - Group Ordering Not Closed", amount: 1, notes: "" });
+            let thresholdSF = new Date(deliveryDateSF.getTime());
+            if (mappedType === "Group Ordering") {
+                thresholdSF.setDate(thresholdSF.getDate() - 1);
+                thresholdSF.setHours(17, 0, 0, 0); // 5pm the day before
             } else {
-                mappedType = "Catering";
+                thresholdSF.setDate(thresholdSF.getDate() - 5);
+                thresholdSF.setHours(0, 0, 0, 0);
+            }
+
+            let orderStatus = (nowInSF >= thresholdSF) ? "Finalized" : "New";
+            let todayMidnight = new Date(nowInSF);
+            todayMidnight.setHours(0,0,0,0);
+            if (deliveryDateSF < todayMidnight) {
+                orderStatus = "Completed";
+            }
+            
+            let hasDeliveryPassed = false;
+            if (nowInSF.getTime() >= deliveryDateSF.getTime()) {
+                hasDeliveryPassed = true;
+            }
+
+            let customerName = "Cater2.ME User";
+            let pickUpTime = "N/A";
+            
+            // Build address from API JSON if available
+            let address = "N/A";
+            if (o.addressObj) {
+                let parts = [];
+                if (o.addressObj.line_1) parts.push(o.addressObj.line_1);
+                if (o.addressObj.line_2) parts.push(o.addressObj.line_2);
+                if (o.addressObj.city) parts.push(o.addressObj.city);
+                if (o.addressObj.state) parts.push(o.addressObj.state);
+                if (parts.length > 0) {
+                    address = parts.join(', ');
+                }
+            }
+            
+            let instructions = "N/A";
+            let itemsList = [];
+            let subTotalNum = 0, taxNum = 0, totalNum = 0;
+
+            let shouldFetchPdf = false;
+            if (mappedType === "Managed") {
+                shouldFetchPdf = true;
+            } else if (mappedType === "Group Ordering" && (orderStatus === "Finalized" || orderStatus === "Completed")) {
+                shouldFetchPdf = true;
+            }
+
+            if (!shouldFetchPdf) {
+                itemsList.push({ name: "Menu TBD - Group Ordering Not Closed", amount: 1, notes: "" });
+                console.log(`\n[${i+1}/${validOrders.length}] ⏭️  Skipping PDF for Group Ordering order ${order_Id_String}...`);
+            } else {
+                console.log(`\n[${i+1}/${validOrders.length}] 📥 Fetching Source PDF for ${order_Id_String}...`);
                 
+                let text = "";
+                try {
+                    const pdfRes = await fetch(o.pdf_url, { headers: { "Cookie": CATER_COOKIE, "Accept": "*/*" } });
+                    const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+                    const data = await pdfExtractor.extractBuffer(pdfBuffer, {});
+                    
+                    data.pages.forEach(page => {
+                        let lastY = -1;
+                        page.content.forEach(item => {
+                            if (lastY !== -1 && Math.abs(item.y - lastY) > 5) text += "\n";
+                            text += item.str + " ";
+                            lastY = item.y;
+                        });
+                        text += "\n";
+                    });
+                } catch (err) {
+                    console.error(`❌ Failed to fetch or parse PDF for ${order_Id_String}: ${err.message}`);
+                }
+
+                let contactMatch = text.match(/CONTACT:\s*(.+)/);
+                let companyMatch = text.match(/COMPANY:\s*(.+)/);
+                let contact = contactMatch ? contactMatch[1].trim() : "";
+                let company = companyMatch ? companyMatch[1].trim() : "";
+                if (contact || company) {
+                    customerName = `${contact} (${company})`.trim();
+                    if (customerName === "()") customerName = "Cater2.ME User";
+                }
+
+                let setupTimeMatch = text.match(/Set-Up Completed By:\s*(.+)/);
+                if (setupTimeMatch) pickUpTime = setupTimeMatch[1].trim();
+
+                let addressMatch = text.match(/ADDRESS:([\s\S]+?)DELIVERY INSTRUCTIONS:/);
+                if (addressMatch) {
+                    let addressArr = addressMatch[1].trim().split('\n').map(l=>l.trim()).filter(l=>l);
+                    address = addressArr.join(', ').replace(/\s{2,}/g, ' ');
+                }
+
+                let instructionsMatch = text.match(/DELIVERY INSTRUCTIONS:([\s\S]+?)(Order Instructions|Order Confirmation|Scheduled Order|Menu Preview)/i);
+                if (instructionsMatch) {
+                    instructions = instructionsMatch[1].trim().replace(/\n/g, ' - ');
+                }
+
                 let lines = text.split('\n');
                 for (let j = 0; j < lines.length; j++) {
                     let line = lines[j].trim();
@@ -148,7 +216,9 @@ const pdfExtractor = new PDFExtract();
                             k++;
                         }
                         
-                        let cleanName = rawName.replace(/\(\d*\s*Serv\.\)/i, '').replace(/\(\d*$/i, '').replace(/\(\d*\s*S$/i, '').trim();
+                        let cleanName = rawName.replace(/\(\d*\s*Serv\.\)/i, '').replace(/\(\d*$/i, '').replace(/\(\d*\s*S$/i, '');
+                        cleanName = cleanName.replace(/\*\*\*[\s\S]*?\*\*\*/g, '').replace(/served FAMILY STYLE/i, '').replace(/Contains:[\s\S]*?(?=Description:|$)/i, '').replace(/Description:[\s\S]*?(?=Item \d+ of \d+|$)/i, '').replace(/Item \d+ of \d+/i, '');
+                        cleanName = cleanName.replace(/\(NA\)/i, '').replace(/\(Half Tray\)/i, 'Tray').replace(/\s{2,}/g, ' ').trim();
                         itemsList.push({ name: cleanName, amount: qty, notes: "" });
                     }
                 }
@@ -158,27 +228,6 @@ const pdfExtractor = new PDFExtract();
                 }
             }
 
-            let nowInSF = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-            let [yStr, mStr, dStr] = o.day.split('-');
-            let deliveryDateSF = new Date(Number(yStr), Number(mStr) - 1, Number(dStr)); 
-            
-            let thresholdSF = new Date(deliveryDateSF.getTime());
-            
-            if (mappedType === "Meal Manager") {
-                thresholdSF.setDate(thresholdSF.getDate() - 1);
-                thresholdSF.setHours(17, 0, 0, 0);
-            } else {
-                thresholdSF.setDate(thresholdSF.getDate() - 5);
-                thresholdSF.setHours(0, 0, 0, 0);
-            }
-            
-            let orderStatus = (nowInSF >= thresholdSF) ? "Finalized" : "New";
-            let todayMidnight = new Date(nowInSF);
-            todayMidnight.setHours(0,0,0,0);
-            if (deliveryDateSF < todayMidnight) {
-                orderStatus = "Completed";
-            }
-
             let preTaxRaw = o.menu && o.menu.pre_tax ? String(o.menu.pre_tax).replace(/[\$,]/g, '') : "0";
             let totalRaw = o.menu && o.menu.vendor_final_with_tips ? String(o.menu.vendor_final_with_tips).replace(/[\$,]/g, '') : "0";
             
@@ -186,20 +235,18 @@ const pdfExtractor = new PDFExtract();
             totalNum = parseFloat(totalRaw) || 0;
 
             let netNum = 0;
-            let headcountMatch = text.match(/HEADCOUNT:\s*(\d+)/i);
-            let headcount = headcountMatch ? parseInt(headcountMatch[1], 10) : 0;
+            let headcount = 0;
+            // Note: text is only defined if shouldFetchPdf was true
+            if (typeof text !== "undefined") {
+                let headcountMatch = text.match(/HEADCOUNT:\s*(\d+)/i);
+                if (headcountMatch) headcount = parseInt(headcountMatch[1], 10);
+            }
             
             if (headcount === 0 && o.carts_count) {
                 headcount = parseInt(o.carts_count, 10);
             }
 
-            let hasDeliveryPassed = false;
-            let nowTime = nowInSF.getTime();
-            if (nowTime >= deliveryDateSF.getTime()) {
-                hasDeliveryPassed = true;
-            }
-
-            if (mappedType === "Meal Manager" && !hasDeliveryPassed) {
+            if (mappedType === "Group Ordering" && !hasDeliveryPassed) {
                subTotalNum = 0;
                totalNum = 0;
                netNum = 0;
@@ -219,6 +266,41 @@ const pdfExtractor = new PDFExtract();
             let day = String(deliveryDateSF.getDate()).padStart(2, '0');
             let formattedDate = `${year}-${month}-${day}`;
 
+            let finalItems = [];
+            for (let item of itemsList) {
+                if (item.name === "Menu TBD - Group Ordering Not Closed" || item.name === "Finalized Managed Order Items") {
+                     finalItems.push(item);
+                     continue;
+                }
+                
+                let rawName = item.name.trim();
+                let amount = item.amount;
+                let matchedName = rawName;
+                
+                for (const mObj of menuItemsMap) {
+                    let match = rawName.toLowerCase().includes(mObj.title.toLowerCase());
+                    if (!match && mObj.platformOverrides && mObj.platformOverrides['Cater2.ME'] && mObj.platformOverrides['Cater2.ME'].alias) {
+                        let c2mAlias = mObj.platformOverrides['Cater2.ME'].alias.toLowerCase();
+                        if (c2mAlias.length > 3 && rawName.toLowerCase().includes(c2mAlias)) {
+                            match = true;
+                        }
+                    }
+                    if (!match && mObj.aliases) {
+                        match = mObj.aliases.some(a => a.length > 3 && rawName.toLowerCase().includes(a.toLowerCase()));
+                    }
+                    if (match) {
+                        matchedName = mObj.title;
+                        break;
+                    }
+                }
+                
+                finalItems.push({
+                   name: matchedName,
+                   amount: amount,
+                   notes: rawName !== matchedName ? rawName : ""
+                });
+            }
+
             let orderPayload = {
                 id: o.original_id,
                 platform: "Cater2.ME",
@@ -231,7 +313,7 @@ const pdfExtractor = new PDFExtract();
                 total: totalNum,
                 netPayout: netNum,
                 status: orderStatus,
-                items: itemsList,
+                items: finalItems,
                 overallNotes: instructions || "Automatically extracted via Cater2.ME headless worker."
             };
 

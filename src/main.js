@@ -1268,3 +1268,13 @@ function renderPrepTab() {
     }
 }
 
+// Sidebar Toggle Logic
+const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+if (sidebarToggleBtn) {
+    sidebarToggleBtn.addEventListener('click', () => {
+        document.querySelector('.sidebar').classList.toggle('collapsed');
+        document.querySelector('.main-content').classList.toggle('expanded');
+    });
+}
+
+
