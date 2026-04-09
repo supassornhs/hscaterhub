@@ -212,7 +212,13 @@ function renderDashboard() {
     }
   });
 
-  const avgPayout = deliveryDates.size > 0 ? (totalNetPayout / deliveryDates.size) : 0;
+  let daysDivisor = deliveryDates.size;
+  if (startDate) {
+     const [yr, mo] = startDate.split('-');
+     daysDivisor = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+  }
+
+  const avgPayout = daysDivisor > 0 ? (totalNetPayout / daysDivisor) : 0;
 
   dashTotalOrders.innerText = totalOrders;
   dashTotalAmount.innerText = '$' + totalAmount.toFixed(2);
