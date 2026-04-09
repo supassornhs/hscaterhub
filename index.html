@@ -19,31 +19,34 @@
         <div class="logo-container">
           <div class="logo-icon"></div>
           <h1 class="logo-text">HSCaterHub</h1>
+          <button id="sidebar-toggle-btn" class="sidebar-toggle">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          </button>
         </div>
         <nav class="nav-menu">
           <button class="nav-item" data-tab="dashboard">
             <span class="icon">📊</span>
-            Dashboard
-          </button>
-          <button class="nav-item active" data-tab="orders">
-            <span class="icon">📦</span>
-            All Orders
+            <span class="nav-text">Dashboard</span>
           </button>
           <button class="nav-item" data-tab="calendar">
             <span class="icon">📅</span>
-            Calendar
+            <span class="nav-text">Calendar</span>
           </button>
-          <button class="nav-item" data-tab="menus">
-            <span class="icon">🍔</span>
-            Menu Items
+          <button class="nav-item active" data-tab="orders">
+            <span class="icon">📦</span>
+            <span class="nav-text">All Orders</span>
           </button>
           <button class="nav-item" data-tab="prep">
             <span class="icon">🔪</span>
-            Preparation
+            <span class="nav-text">Preparation</span>
+          </button>
+          <button class="nav-item" data-tab="menus">
+            <span class="icon">🍔</span>
+            <span class="nav-text">Menu Items</span>
           </button>
           <button class="nav-item" data-tab="crawlers">
             <span class="icon">🕷️</span>
-            Crawlers
+            <span class="nav-text">Crawlers</span>
           </button>
         </nav>
       </aside>

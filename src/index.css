@@ -45,6 +45,39 @@ h1, h2, h3, h4 {
   flex-direction: column;
   padding: 2rem 1.5rem;
   z-index: 10;
+  transition: width 0.3s ease, padding 0.3s ease;
+}
+
+.sidebar.collapsed {
+  width: 90px;
+  padding: 2rem 1rem;
+}
+
+.sidebar.collapsed .logo-text, .sidebar.collapsed .nav-text {
+  display: none;
+}
+
+.sidebar.collapsed .logo-container {
+  gap: 0;
+  flex-direction: column-reverse;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  margin: 0 auto 1.5rem auto;
+}
+
+.sidebar-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-left: auto;
+  padding: 4px;
+  transition: color 0.3s ease;
+}
+
+.sidebar-toggle:hover {
+  color: var(--text-primary);
 }
 
 .logo-container {
@@ -97,6 +130,15 @@ h1, h2, h3, h4 {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
   transform: translateX(4px);
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+.sidebar.collapsed .nav-item:hover {
+  transform: translateX(0) scale(1.05);
 }
 
 .nav-item.active {

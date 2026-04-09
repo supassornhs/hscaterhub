@@ -123,6 +123,14 @@ document.querySelectorAll('.nav-item').forEach(button => {
   });
 });
 
+// Sidebar Toggle Logic
+document.getElementById('sidebar-toggle-btn')?.addEventListener('click', () => {
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) {
+    sidebar.classList.toggle('collapsed');
+  }
+});
+
 // Compute Dynamic Status
 function computeOrderStatus(order) {
   if (order.status === 'Cancelled' || order.status === 'Archived') return order.status;
