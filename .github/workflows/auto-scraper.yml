@@ -37,3 +37,7 @@ jobs:
       - name: Run Cater2Me Scraper
         run: node scripts/cater2me_scraper.js
         continue-on-error: true
+
+      - name: Run Hungry Scraper
+        run: node scripts/hungry_scraper.js
+        continue-on-error: true

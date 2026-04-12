@@ -364,12 +364,7 @@ async function run() {
             lookbackDate.setDate(lookbackDate.getDate() - 2);
             const searchCriteria = [
                 ['SINCE', lookbackDate],
-                ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]
-            ];
-            // Also search for "Action Required" subjects which Forkable uses for add-ons
-            const searchCriteriaAdhoc = [
-                ['SINCE', lookbackDate],
-                ['OR', ['SUBJECT', 'Action Required'], ['SUBJECT', 'Confirm Changes']]
+                ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Confirm Changes'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]]
             ];
             const fetchOptions = {
                 bodies: ['HEADER', 'TEXT', ''],
@@ -378,14 +373,7 @@ async function run() {
 
             console.log("📡 Scanning Inbox for unread Delivery emails...");
             try {
-                let msgs1 = await connection.search(searchCriteria, fetchOptions);
-                let msgs2 = await connection.search(searchCriteriaAdhoc, fetchOptions);
-                
-                // Merge and deduplicate by uid
-                let msgMap = new Map();
-                msgs1.forEach(m => msgMap.set(m.attributes.uid, m));
-                msgs2.forEach(m => msgMap.set(m.attributes.uid, m));
-                let messages = Array.from(msgMap.values());
+                let messages = await connection.search(searchCriteria, fetchOptions);
 
                 if (messages.length === 0) {
                     console.log("✉️ Zero new unread delivery orders found in inbox.");
@@ -402,7 +390,7 @@ async function run() {
                         let bodyText = parsedMail.text || "";
                         let combinedText = subjectHeader + "\n\n" + bodyText;
 
-                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('action required')) {
+                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('confirm changes')) {
                             await processForkableEmail(combinedText, parsedMail.html);
                         } else if (subjectHeader.toLowerCase().includes('doordash') || subjectHeader.toLowerCase().includes('new catering order')) {
                             await processDoordashEmail(combinedText);
