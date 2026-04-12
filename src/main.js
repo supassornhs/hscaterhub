@@ -188,6 +188,7 @@ function renderDashboard() {
   const endDate = document.getElementById('dash-end-date').value;
 
   const filteredOrders = orders.filter(o => {
+    if (o.status === 'Cancelled' || o.status === 'Archived') return false;
     if (!o.deliveryDate) return false;
     if (startDate && o.deliveryDate < startDate) return false;
     if (endDate && o.deliveryDate > endDate) return false;
@@ -1147,6 +1148,7 @@ function renderPrepTab() {
 
     // Get order matching the date
     const targetOrders = orders.filter(o => {
+        if (o.status === 'Cancelled' || o.status === 'Archived') return false;
         if (!o.deliveryDate) return false;
         // Match YYYY-MM-DD prefix purely
         return o.deliveryDate.startsWith(dateInput);
