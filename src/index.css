@@ -810,3 +810,8 @@ tbody tr:hover {
   text-transform: capitalize;
   font-weight: 500;
 }
+
+select option {
+  color: #0f172a;
+  background-color: #ffffff;
+}
