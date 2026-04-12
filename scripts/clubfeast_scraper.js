@@ -142,7 +142,7 @@ const AUTH_FILE = './clubfeast_auth.json';
     });
     finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
     console.log(`✅ Found ${finalizedLinks.length} active 'Finalized' order routes.`);
-  
+
     let finalLinks = Array.from(orderLinks.keys());
     console.log(`\n🎯 Scrape Mission initialized! Scraping ${finalLinks.length} independent Order Pages...`);
   
@@ -222,8 +222,18 @@ const AUTH_FILE = './clubfeast_auth.json';
             }
             if (!formattedDate) {
                 let urlDateMatch = window.location.href.match(/date=(\d{4}-\d{2}-\d{2})/);
-                if (urlDateMatch) formattedDate = urlDateMatch[1];
-                else formattedDate = new Date().toISOString().split('T')[0];
+                if (urlDateMatch) {
+                    formattedDate = urlDateMatch[1];
+                } else if (orderId && orderId.includes('-L')) {
+                    const datePart = orderId.split('-L')[1].substring(0, 6);
+                    if (datePart.length === 6 && !isNaN(datePart)) {
+                        formattedDate = `20${datePart.substring(0,2)}-${datePart.substring(2,4)}-${datePart.substring(4,6)}`;
+                    } else {
+                        formattedDate = new Date().toISOString().split('T')[0];
+                    }
+                } else {
+                    formattedDate = new Date().toISOString().split('T')[0];
+                }
             }
   
             const items = [];
@@ -274,6 +284,10 @@ const AUTH_FILE = './clubfeast_auth.json';
             let sfDateStr = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", year: 'numeric', month: 'numeric', day: 'numeric' });
             let sfTodayMidnight = new Date(sfDateStr);
             let currentStatus = cleanDate < sfTodayMidnight ? "Completed" : "New";
+
+            if (route.includes("canceled=true") || route.includes("cancelled=true")) {
+                currentStatus = "Cancelled";
+            }
 
             let newOrder = {
                 id: orderDataRaw.id,
