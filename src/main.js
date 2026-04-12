@@ -273,6 +273,7 @@ function renderOrders(filter = 'all') {
       let statusClass = 'status-pending';
       if (dynamicStatus === 'Completed') statusClass = 'status-completed';
       if (dynamicStatus === 'Finalize') statusClass = 'status-finalize';
+      if (dynamicStatus === 'Cancelled') statusClass = 'status-cancelled';
       
       const row = document.createElement('tr');
       const itemsStr = order.items && order.items.length > 0 
@@ -387,6 +388,7 @@ function openOrderDetails(order) {
     let statusClass = 'status-pending';
     if (dynamicStatus === 'Completed') statusClass = 'status-completed';
     if (dynamicStatus === 'Finalize') statusClass = 'status-finalize';
+    if (dynamicStatus === 'Cancelled') statusClass = 'status-cancelled';
 
     panelContent.innerHTML = `
     <div class="panel-header">

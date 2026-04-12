@@ -350,6 +350,11 @@ tbody tr:hover {
   color: var(--accent-primary);
 }
 
+.status-cancelled {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
 /* Platform Menus */
 .filters {
   margin-bottom: 2rem;
