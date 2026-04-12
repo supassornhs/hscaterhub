@@ -113,14 +113,14 @@ const db = getFirestore(app);
             let newOrder = {
                 id: orderIdParsed.replace("HNG-", ""),
                 platform: "Hungry",
-                customerName: orderIdParsed, // Setting Customer Name explicitly to Order ID like ClubFeast
+                customerName: order.contact?.name || order.clientName || orderIdParsed, 
                 typeOfOrder: mappedType,
                 deliveryDate: formattedDate,
-                deliveryTime: "N/A",  // Usually pickup
-                deliveryMethod: "Pickup",
+                deliveryTime: pickUpTimeStr,
+                deliveryMethod: "Platform",
                 pickUpTime: pickUpTimeStr,
-                subtotal: parseFloat(order.grossPayout || 0),
-                total: parseFloat(order.grossPayout || 0),
+                subtotal: parseFloat(order.dailyGrossVolume || order.grossPayout || 0),
+                total: parseFloat(order.dailyGrossVolume || order.grossPayout || 0),
                 netPayout: parseFloat(order.totalPayout || 0),
                 status: calculatedStatus,
                 overallNotes: order.instructions || order.dietaryPreferences || "No instructions provided.",
