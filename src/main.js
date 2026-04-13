@@ -259,13 +259,26 @@ document.getElementById('dash-start-date')?.addEventListener('change', renderDas
 document.getElementById('dash-end-date')?.addEventListener('change', renderDashboard);
 
 // Render Orders Table
-function renderOrders(filter = 'all') {
+function renderOrders() {
   const tbody = document.getElementById('orders-tbody');
   tbody.innerHTML = '';
 
+  const platformFilter = document.getElementById('orders-platform-filter')?.value || 'all';
+  const statusFilter = document.getElementById('orders-status-filter')?.value || 'all';
+  const startDate = document.getElementById('orders-start-date')?.value || '';
+  const endDate = document.getElementById('orders-end-date')?.value || '';
+
   const filteredOrders = orders.filter(o => {
-    if (filter === 'all') return true;
-    return o.platform && o.platform.toLowerCase() === filter.toLowerCase();
+    let keep = true;
+    if (platformFilter !== 'all' && (!o.platform || o.platform.toLowerCase() !== platformFilter.toLowerCase())) keep = false;
+    
+    const dynamicStatus = computeOrderStatus(o);
+    if (statusFilter !== 'all' && dynamicStatus.toLowerCase() !== statusFilter.toLowerCase()) keep = false;
+
+    if (startDate && (!o.deliveryDate || o.deliveryDate < startDate)) keep = false;
+    if (endDate && (!o.deliveryDate || o.deliveryDate > endDate)) keep = false;
+
+    return keep;
   });
 
   filteredOrders.forEach(order => {
@@ -715,11 +728,10 @@ document.getElementById('category-filter').addEventListener('change', (e) => {
   renderMenus(e.target.value);
 });
 
-document.getElementById('orders-platform-filter')?.addEventListener('change', (e) => {
-  renderOrders(e.target.value);
-});
-
-
+document.getElementById('orders-platform-filter')?.addEventListener('change', renderOrders);
+document.getElementById('orders-status-filter')?.addEventListener('change', renderOrders);
+document.getElementById('orders-start-date')?.addEventListener('change', renderOrders);
+document.getElementById('orders-end-date')?.addEventListener('change', renderOrders);
 // Init
 const dashStartEl = document.getElementById('dash-start-date');
 const dashEndEl = document.getElementById('dash-end-date');
@@ -743,8 +755,7 @@ onSnapshot(collection(db, 'orders'), (snapshot) => {
     return dateB - dateA;
   });
   
-  const currentFilter = document.getElementById('orders-platform-filter')?.value || 'all';
-  renderOrders(currentFilter);
+  renderOrders();
   renderDashboard();
   if (typeof renderPrepTab === 'function') renderPrepTab();
   
