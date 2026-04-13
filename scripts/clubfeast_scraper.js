@@ -143,8 +143,38 @@ const AUTH_FILE = './clubfeast_auth.json';
     finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
     console.log(`✅ Found ${finalizedLinks.length} active 'Finalized' order routes.`);
 
-    let finalLinks = Array.from(orderLinks.keys());
-    console.log(`\n🎯 Scrape Mission initialized! Scraping ${finalLinks.length} independent Order Pages...`);
+    let initialLinks = Array.from(orderLinks.keys());
+    let idMap = {};
+    let finalLinks = [];
+
+    for (let link of initialLinks) {
+        let idPart = link.includes('/orders/') ? link.split('/orders/')[1] : null;
+        if (!idPart && link.includes('/packages/')) idPart = link.split('/packages/')[1];
+        
+        if (idPart) {
+           let id = idPart.split('?')[0].replace('#', '');
+           if (!idMap[id]) idMap[id] = [];
+           idMap[id].push(link);
+        } else {
+           finalLinks.push(link);
+        }
+    }
+
+    for (let id in idMap) {
+        let links = idMap[id];
+        if (links.length > 1) {
+             let validLinks = links.filter(l => !l.includes("canceled=true") && !l.includes("cancelled=true"));
+             if (validLinks.length > 0) {
+                 finalLinks.push(validLinks[0]); 
+             } else {
+                 finalLinks.push(links[0]); 
+             }
+        } else {
+             finalLinks.push(links[0]);
+        }
+    }
+
+    console.log(`\n🎯 Scrape Mission initialized! Scraping ${finalLinks.length} independent Order Pages (down from ${initialLinks.length} due to deduplication)...`);
   
     let menuItemsMap = [];
     try {
