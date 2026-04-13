@@ -6,6 +6,24 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 let orders = [];
 let menuItems = [];
 
+export function normalizePlatform(rawPlatform) {
+  if (!rawPlatform) return 'Unknown';
+  const platMap = {
+    'cater2.me': 'Cater2.me',
+    'ezcater': 'ezCater',
+    'uber eats': 'Uber Eats',
+    'doordash': 'DoorDash',
+    'clubfeast': 'ClubFeast',
+    'direct': 'Direct',
+    'forkable': 'Forkable',
+    'fooda': 'Fooda',
+    'foodja': 'Foodja',
+    'hungry': 'Hungry',
+    'zerocater': 'Zerocater'
+  };
+  return platMap[rawPlatform.toLowerCase().trim()] || rawPlatform.trim();
+}
+
 const MOCK_ORDERS = [
   {
     id: '#ORD-7023',
@@ -203,7 +221,7 @@ function renderDashboard() {
     if (o.deliveryDate) deliveryDates.add(o.deliveryDate);
     
     // Platform stats
-    const plat = o.platform || 'Unknown';
+    const plat = normalizePlatform(o.platform) || 'Unknown';
     if (!platformStats[plat]) {
       platformStats[plat] = { count: 0, total: 0, netPayout: 0 };
     }
@@ -308,7 +326,7 @@ function renderOrders() {
 
     row.innerHTML = `
       <td><strong>${order.id}</strong></td>
-      <td>${order.platform}</td>
+      <td>${normalizePlatform(order.platform)}</td>
       <td>${order.customerName}</td>
       <td style="white-space: nowrap;">${order.deliveryDate}</td>
       <td>
