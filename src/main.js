@@ -1310,4 +1310,87 @@ if (sidebarToggleBtn) {
     });
 }
 
+// Export Orders Logic
+document.getElementById('export-orders-btn')?.addEventListener('click', () => {
+  if (!orders || orders.length === 0) {
+    alert("No orders to export.");
+    return;
+  }
 
+  // Get current filters
+  const platformFilter = document.getElementById('orders-platform-filter')?.value || 'all';
+  const statusFilter = document.getElementById('orders-status-filter')?.value || 'all';
+  const startDate = document.getElementById('orders-start-date')?.value || '';
+  const endDate = document.getElementById('orders-end-date')?.value || '';
+
+  const filteredOrders = orders.filter(o => {
+    let keep = true;
+    if (platformFilter !== 'all') {
+      const oPlat = normalizePlatform(o.platform);
+      if (!oPlat || oPlat.toLowerCase() !== platformFilter.toLowerCase()) keep = false;
+    }
+    
+    const dynamicStatus = computeOrderStatus(o);
+    if (statusFilter !== 'all' && dynamicStatus.toLowerCase() !== statusFilter.toLowerCase()) keep = false;
+
+    if (startDate && (!o.deliveryDate || o.deliveryDate < startDate)) keep = false;
+    if (endDate && (!o.deliveryDate || o.deliveryDate > endDate)) keep = false;
+
+    return keep;
+  });
+
+  if (filteredOrders.length === 0) {
+    alert("No orders match the current filters.");
+    return;
+  }
+
+  // Generate CSV without item breakdowns
+  let csvContent = "Order ID,Platform,Customer Name,Delivery Date,Delivery Method,Time,Subtotal,Total,Net Payout,Status,Notes\n";
+  
+  filteredOrders.forEach(o => {
+    const dynamicStatus = computeOrderStatus(o);
+    const plat = normalizePlatform(o.platform);
+    let methodTimeStr = '';
+    let methodType = o.deliveryMethod || 'Platform';
+    if (methodType.toLowerCase() === 'platform' || methodType.toLowerCase() === 'partner') {
+        methodTimeStr = o.pickUpTime || o.deliveryTime || 'TBD';
+    } else {
+        methodTimeStr = o.deliveryTime || 'TBD';
+    }
+
+    const escapeCsv = (str) => {
+        if (str === null || str === undefined) return '""';
+        let cleanMatch = String(str).replace(/"/g, '""');
+        return `"${cleanMatch}"`;
+    };
+
+    let displaySubtotal = typeof o.subtotal === 'number' ? o.subtotal.toFixed(2) : parseFloat(o.subtotal || 0).toFixed(2);
+    let displayTotal = typeof o.total === 'number' ? o.total.toFixed(2) : parseFloat(o.total || 0).toFixed(2);
+    let displayNet = typeof o.netPayout === 'number' ? o.netPayout.toFixed(2) : parseFloat(o.netPayout || 0).toFixed(2);
+
+    let row = [
+        escapeCsv(o.id),
+        escapeCsv(plat),
+        escapeCsv(o.customerName),
+        escapeCsv(o.deliveryDate),
+        escapeCsv(methodType),
+        escapeCsv(methodTimeStr),
+        escapeCsv(displaySubtotal),
+        escapeCsv(displayTotal),
+        escapeCsv(displayNet),
+        escapeCsv(dynamicStatus),
+        escapeCsv(o.overallNotes)
+    ];
+
+    csvContent += row.join(",") + "\n";
+  });
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `HSCaterHub_Export_${new Date().toISOString().split('T')[0]}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+});
