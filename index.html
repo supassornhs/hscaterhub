@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/src/index.css" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
   </head>
   <body>
@@ -20,7 +21,7 @@
           <div class="logo-icon"></div>
           <h1 class="logo-text">HSCaterHub</h1>
           <button id="sidebar-toggle-btn" class="sidebar-toggle">
-            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+            <svg id="toggle-icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
         </div>
         <nav class="nav-menu">
@@ -221,14 +222,15 @@
               <div style="display: flex; gap: 1rem; align-items: center;">
                 <input type="date" id="prep-date-filter" style="background: var(--bg-tertiary); border: 1px solid var(--glass-border); color: white; padding: 0.5rem; border-radius: 8px;">
                 <div style="display: flex; background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: 8px; overflow: hidden;">
-                  <button id="prep-view-dish" class="prep-toggle-btn active" style="padding: 0.5rem 1rem; background: var(--primary-accent); border: none; color: white; cursor: pointer; font-weight: 600;">Dish View</button>
+                  <button id="prep-view-order" class="prep-toggle-btn active" style="padding: 0.5rem 1rem; background: var(--primary-accent); border: none; color: white; cursor: pointer; font-weight: 600;">Order View</button>
+                  <button id="prep-view-dish" class="prep-toggle-btn" style="padding: 0.5rem 1rem; background: transparent; border: none; color: var(--text-secondary); cursor: pointer; transition: 0.2s;">Dish View</button>
                   <button id="prep-view-comp" class="prep-toggle-btn" style="padding: 0.5rem 1rem; background: transparent; border: none; color: var(--text-secondary); cursor: pointer; transition: 0.2s;">Component View</button>
                 </div>
               </div>
             </div>
 
             <!-- Dish View Content -->
-            <div id="prep-dish-container">
+            <div id="prep-dish-container" style="display: none;">
               <table class="dashboard-table">
                 <thead><tr><th style="padding-left: 1rem;">Dish Name</th><th style="text-align: right;">Total Quantity</th><th style="text-align: right; padding-right: 1rem;">Total Servings</th></tr></thead>
                 <tbody id="prep-dish-tbody"></tbody>
@@ -239,6 +241,13 @@
             <div id="prep-comp-container" style="display: none;">
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;" id="prep-comp-grids">
                     <!-- Dynamic Component Cards injected here -->
+                </div>
+            </div>
+
+            <!-- Order View Content -->
+            <div id="prep-order-container">
+                <div style="display: flex; flex-direction: column; gap: 1rem;" id="prep-order-grids">
+                    <!-- Dynamic Order Cards injected here -->
                 </div>
             </div>
           </div>

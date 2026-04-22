@@ -44,176 +44,219 @@ const config = {
 };
 
 async function processForkableEmail(text, htmlStr = "") {
-    console.log("-> Parsing Forkable payload...");
+    console.log("-> Parsing Forkable payload with multi-group support...");
     
-    let dateMatch = text.match(/DATE\[?\n\s*\]?\s*(.+?202\d|.+?(?=LOCATION|\n\n))/i) || text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ a-z]*\s+\d{1,2}(?:\s*,\s*202\d)?/i);
-    let locationMatch = text.match(/LOCATION\s*\n\s*(.+)/i) || text.match(/LOCATION:\s*(.+)/i) || ["", "Pickup Location"];
-    let timeDriverMatch = text.match(/Pickup Time(?:\(s\))?:\s*(.+?)-(?:(?:\s*Driver\s*)(.+))?/i) || text.match(/Pickup Time(?:\(s\))?:\s*(.+)/i);
-    let subtotalMatch = text.match(/Sub\s?Total\s*\$([0-9,.]+)/i);
-    let titleDateMatch = text.match(/Forkable Pickup(?: Date)?(?:\s+(.*?))?(?:\s+at)?\s+([0-9:]+[APM]{2})/i);
-
-    let rawDate = dateMatch ? (dateMatch[1] || dateMatch[0]) : (titleDateMatch && titleDateMatch[1] ? titleDateMatch[1] : new Date().toDateString());
-    let cleanDate = new Date(rawDate);
-    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0) && rawDate) {
-        cleanDate = new Date(`${rawDate} ${new Date().getFullYear()}`);
-    }
-
-    let year = cleanDate.getFullYear().toString();
-    let month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
-    let day = cleanDate.getDate().toString().padStart(2, '0');
-    let formattedDate = `${year}-${month}-${day}`;
-
-    let pickupTime = timeDriverMatch ? timeDriverMatch[1].trim() : (titleDateMatch ? titleDateMatch[2] : "10:00AM");
-    let subtotal = subtotalMatch ? parseFloat(subtotalMatch[1].replace(/,/g, '')) : 0;
-    let location = locationMatch[1].trim();
-
-    let parsedItems = [];
-    if (htmlStr) {
-        try {
-            let itemRegex = /<td[^>]*class="[^"]*item-label[^"]*"[^>]*>([\s\S]*?)<\/td>/gi;
-            let match;
-            let countObj = {};
-            while((match = itemRegex.exec(htmlStr)) !== null) {
-                let name = match[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-                countObj[name] = (countObj[name] || 0) + 1;
-            }
-            for (const [key, val] of Object.entries(countObj)) {
-                parsedItems.push({ Item_Name: key.replace(/&amp;/g, '&').replace(/&#39;/g, "'"), Item_Amount: val });
-            }
-        } catch(e) {}
+    // 1. Get the general date (applies to all groups in this email)
+    let dateMatch = text.match(/DATE\[?\n\s*\]?\s*(.+?202\d|.+?(?=LOCATION|\n\n))/i) || 
+                    text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ a-z]*\s+\d{1,2}(?:\s*,\s*202\d)?/i) ||
+                    text.match(/Forkable Pickup(?: Date)?\s+([A-Za-z]+ \d{1,2}, \d{4})/i);
+    
+    let rawDateStr = dateMatch ? (dateMatch[1] || dateMatch[0]) : new Date().toDateString();
+    let cleanDate = new Date(rawDateStr);
+    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0) && rawDateStr) {
+        cleanDate = new Date(`${rawDateStr} ${new Date().getFullYear()}`);
     }
     
-    if (parsedItems.length === 0) {
-        try {
-            let match = text.match(/LOCATION\s*[\r\n]+\s*[^\n]+\s*[\r\n]+([\s\S]*?)(?:Pickup Time|Order Summary)/i);
-            if (!match) match = text.match(/LOCATION:\s*[^\n]+\s*[\r\n]+([\s\S]*?)(?:Pickup Time|Order Summary)/i);
-            if (match && match[1]) {
-                let itemsBlock = match[1].trim();
-                let lines = itemsBlock.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-                for (let i = 0; i < lines.length; i += 2) {
-                    let name = lines[i];
-                    let qty = parseInt(lines[i + 1]);
-                    if (!isNaN(qty) && name.toLowerCase() !== 'meals' && name.toLowerCase() !== 'utensils') {
-                        parsedItems.push({ Item_Name: name, Item_Amount: qty });
-                    }
-                }
-            }
-        } catch(e) {}
-    }
-
-    if (parsedItems.length === 0) {
-        parsedItems = [{ Item_Name: "Forkable Group Meals", Item_Amount: 1 }];
-    }
-
-    let orderId = `FRK-${month}${day}-${pickupTime.replace(':','')}`;
+    const year = cleanDate.getFullYear();
+    const month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
+    const day = cleanDate.getDate().toString().padStart(2, '0');
+    const formattedDate = `${year}-${month}-${day}`;
     
     let sfDateStr = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", year: 'numeric', month: 'numeric', day: 'numeric' });
     let sfTodayMidnight = new Date(sfDateStr);
     let currentStatus = cleanDate < sfTodayMidnight ? "Completed" : "New";
-    
-    let finalItems = [];
 
+    // 2. Fetch menu items once for matching
+    let menuItemsMap = [];
     try {
         const menuDocs = await getDocs(collection(db, 'menus'));
-        const menuItemsMap = menuDocs.docs.map(d => d.data());
+        menuItemsMap = menuDocs.docs.map(d => d.data());
         menuItemsMap.sort((a,b) => b.title.length - a.title.length);
+    } catch(e) { console.log("Menu match fallback failed.", e); }
 
-        for (let item of parsedItems) {
-            let rawName = item.Item_Name;
-            let amount = item.Item_Amount;
-            let splitIdx = rawName.indexOf('»');
-            if (splitIdx === -1) splitIdx = rawName.indexOf('>>');
+    // 3. Line-by-line parsing for headers and groups
+    let lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    let currentHeader = { time: "10:00AM", driver: "TBD" };
+    let groups = [];
+    let currentGroup = null;
+    let buffer = "";
+    
+    const processBuffer = (itemText) => {
+        if (!itemText || !currentGroup) return;
+        
+        let priceMatch = itemText.match(/\$([0-9,.]+)/);
+        if (!priceMatch && !itemText.includes('>>') && !itemText.includes('»')) return; // Ignore blocks with no price or modifier symbols
+        
+        let price = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
+        currentGroup.subtotal += price;
+        
+        let content = itemText.trim();
+        // Remove ALL price strings globally to ensure they don't leak into notes
+        content = content.replace(/\$[0-9,.]+/g, '').trim();
+        
+        // Final aggressive cleanup of structural noise
+        content = content.replace(/\d{1,2}:\d{2}\s*[APM]{2}.*$/gi, '').trim();
+        content = content.replace(/DRIVER:.*$/gi, '').trim();
+        content = content.replace(/[-]{3,}/g, '').trim();
+        content = content.replace(/[\n\t]/g, ' ').trim();
+        content = content.replace(/Any hot sauce.*$/gi, '').trim(); // Remove specific junk request observed
+        
+        // Remove person name
+        content = content.replace(/^[A-Z][a-z0-9\s]* [A-Z]\.\s+/, '').trim();
+        
+        // Skip structural headers, footers, or totals
+        const lowercaseContent = content.toLowerCase();
+        if (!content || 
+            lowercaseContent.includes('items') || 
+            lowercaseContent.includes('group') || 
+            lowercaseContent.includes('for your records') || 
+            lowercaseContent.includes('projected sub total') ||
+            lowercaseContent.includes('balance due') ||
+            lowercaseContent.includes('statement') ||
+            lowercaseContent.includes('driver:') ||
+            content.length < 3) return;
 
-            let mainName = rawName;
-            let modifierRaw = "";
+        let chunks = content.split(/[┬╗»>>]/).map(c => c.trim()).filter(c => c);
+        if (chunks.length === 0) return;
 
-            if (splitIdx !== -1) {
-                mainName = rawName.substring(0, splitIdx).trim();
-                modifierRaw = rawName.substring(splitIdx + 1).replace(/^>/, '').trim();
+        let mainRaw = chunks[0];
+        let mods = chunks.slice(1);
+
+        // Resolve Main Dish - Strict Matching
+        let mainDish = mainRaw;
+        let matched = false;
+        for (const m of menuItemsMap) {
+            let title = m.title.toLowerCase();
+            let alias = m.platformOverrides?.Forkable?.alias?.toLowerCase();
+            
+            const isMatch = (text, pattern) => {
+                if (!pattern) return false;
+                // Strict check: the dish title must be present as a distinct entity
+                return text.toLowerCase().includes(pattern);
+            };
+
+            if (isMatch(mainRaw, title) || isMatch(mainRaw, alias)) {
+                mainDish = m.title;
+                matched = true;
+                break;
             }
+        }
+        
+        // If not matched to a menu item, and we suspect it's a driver/person name, skip
+        if (!matched && (mainRaw.split(' ').length <= 2 || mainRaw.includes('---'))) {
+            console.log(`  - Skipping suspected noise: ${mainRaw}`);
+            return;
+        }
 
-            let cleanMainName = mainName;
+        console.log(`  - Adding: ${mainDish} (${matched ? 'Matched' : 'RAW'}) with ${mods.length} mods`);
+
+        // Add parent dish with mods in note
+        let parentNote = mods.join(", ").replace(/^(Add Side|Add|Side)[:\s]*/gi, '').trim();
+        currentGroup.rawItems.push({ name: mainDish, amount: 1, notes: parentNote ? "Add Side: " + parentNote : "" });
+
+        // Add each mod as its own item for global summation IF it is a recognized menu item
+        for (let mod of mods) {
+            let cleanMod = mod.replace(/^(Add Side|Add|Side)[:\s]*/gi, '').trim();
+            let resolvedMod = null;
             for (const m of menuItemsMap) {
-                let match = mainName.toLowerCase().includes(m.title.toLowerCase());
-                if (!match && m.platformOverrides && m.platformOverrides['Forkable'] && m.platformOverrides['Forkable'].alias) {
-                    match = mainName.toLowerCase().includes(m.platformOverrides['Forkable'].alias.toLowerCase());
-                }
-                if (!match && m.aliases) {
-                    match = m.aliases.some(a => mainName.toLowerCase().includes(a.toLowerCase()));
+                let match = cleanMod.toLowerCase().includes(m.title.toLowerCase());
+                if (!match && m.platformOverrides?.Forkable?.alias) {
+                    match = cleanMod.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase());
                 }
                 if (match) {
-                    cleanMainName = m.title;
+                    resolvedMod = m.title;
                     break;
                 }
             }
-
-            if (modifierRaw) {
-                let sideMatch = null;
-                let potentialSide = modifierRaw.toLowerCase().startsWith('add side:') ? modifierRaw.substring(9).trim() : modifierRaw;
-                
-                for (const m of menuItemsMap) {
-                    let match = potentialSide.toLowerCase().includes(m.title.toLowerCase());
-                    if (!match && m.platformOverrides && m.platformOverrides['Forkable'] && m.platformOverrides['Forkable'].alias) {
-                        match = potentialSide.toLowerCase().includes(m.platformOverrides['Forkable'].alias.toLowerCase());
-                    }
-                    if (!match && m.aliases) {
-                        match = m.aliases.some(a => potentialSide.toLowerCase().includes(a.toLowerCase()));
-                    }
-                    if (match) {
-                        sideMatch = m.title;
-                        break;
-                    }
-                }
-
-                if (sideMatch) {
-                    finalItems.push({ name: cleanMainName, amount: amount, notes: "" });
-                    finalItems.push({ name: sideMatch, amount: amount, notes: "(Add-on from " + cleanMainName + ")" });
-                } else {
-                    finalItems.push({ name: cleanMainName, amount: amount, notes: modifierRaw });
-                }
-            } else {
-                finalItems.push({ name: cleanMainName, amount: amount, notes: "" });
+            if (resolvedMod) {
+                currentGroup.rawItems.push({ name: resolvedMod, amount: 1, notes: "" });
             }
         }
+    };
 
+    for (let line of lines) {
+        // Trigger 1: Structural markers (Header or Time)
+        let hMatch = line.match(/\d{1,2}:\d{2}\s*[APM]{2}/i) || line.match(/DRIVER:/i) || line.match(/---/);
+        let gMatch = line.match(/Group\s+([A-Z]{1,3})/i);
+        
+        // Trigger 3: New Person - support "Alek Q.", "Roberta Woo W.", "J. P." etc.
+        let pMatch = line.match(/^\s*[A-Z][a-z0-9]*\s+[A-Z][a-z]*(\s+[A-Z][a-z]*)*\s+[A-Z]\./) || 
+                     line.match(/^\s*[A-Z][a-z]+\s+[A-Z]\./);
+
+        if (hMatch || gMatch || pMatch) {
+            // Flush current buffer before structural switch
+            processBuffer(buffer);
+            buffer = "";
+
+            if (hMatch) {
+                let tMatch = line.match(/(\d{1,2}:\d{2}\s*[APM]{2})/i);
+                if (tMatch) currentHeader.time = tMatch[1];
+                let dMatch = line.match(/DRIVER:\s*(.*)/i);
+                if (dMatch) currentHeader.driver = dMatch[1].trim();
+                continue;
+            }
+            if (gMatch) {
+                let gm = line.match(/Group\s+([A-Z]{1,3})/i);
+                if (currentGroup) groups.push(currentGroup);
+                currentGroup = {
+                    code: gm[1],
+                    time: currentHeader.time,
+                    driver: currentHeader.driver,
+                    rawItems: [],
+                    subtotal: 0
+                };
+                continue;
+            }
+            if (pMatch) {
+                buffer = line;
+                continue;
+            }
+        }
+        buffer += (buffer ? " " : "") + line;
+    }
+    processBuffer(buffer);
+    if (currentGroup) groups.push(currentGroup);
+
+    console.log(`- Identified ${groups.length} groups.`);
+    for (let groupInfo of groups) {
+        console.log(`- Processing group ${groupInfo.code} (${groupInfo.rawItems.length} items)...`);
+        if (groupInfo.rawItems.length === 0) continue;
+
+        // Consolidate final items
         let consolidated = {};
-        for (const fi of finalItems) {
+        for (const fi of groupInfo.rawItems) {
             let key = fi.name + "|||" + fi.notes;
             if (!consolidated[key]) consolidated[key] = { ...fi };
             else consolidated[key].amount += fi.amount;
         }
-        finalItems = Object.values(consolidated);
-    } catch(e) {
-        console.log("Menu match fallback.", e);
-        finalItems = parsedItems.map(item => ({ name: item.Item_Name, amount: item.Item_Amount, notes: "" }));
-    }
+        let finalItems = Object.values(consolidated);
 
-    let newOrder = {
-        id: orderId,
-        platform: "Forkable",
-        customerName: "Forkable User",
-        typeOfOrder: "Meal Manager",
-        deliveryDate: formattedDate,
-        deliveryTime: pickupTime,
-        deliveryMethod: "Platform",
-        pickUpTime: pickupTime,
-        subtotal: subtotal,
-        total: subtotal,
-        netPayout: subtotal,
-        status: currentStatus,
-        overallNotes: "Automatically imported via IMAP. Deliver Address: " + location,
-        items: finalItems,
-        createdAt: new Date().toISOString()
-    };
-    
-    const docRef = doc(db, 'orders', newOrder.id);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) {
-        console.log(`[Forkable] Skipped (Manual Override): ${newOrder.id}`);
-        return;
+        let orderId = `FRK-${groupInfo.code}-${formattedDate.replace(/-/g,'')}-${groupInfo.time.replace(/[:\s]/g,'')}`;
+        let newOrder = {
+            id: orderId.toUpperCase(),
+            platform: "Forkable",
+            customerName: `Forkable ${groupInfo.code}`,
+            typeOfOrder: "Meal Manager",
+            deliveryDate: formattedDate,
+            deliveryTime: groupInfo.time,
+            deliveryMethod: "Platform",
+            pickUpTime: groupInfo.time,
+            subtotal: groupInfo.subtotal,
+            total: groupInfo.subtotal,
+            netPayout: groupInfo.subtotal,
+            status: currentStatus,
+            overallNotes: `Group: ${groupInfo.code}. Driver: ${groupInfo.driver}.`,
+            items: finalItems,
+            createdAt: new Date().toISOString()
+        };
+
+        const docRef = doc(db, 'orders', newOrder.id);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) continue;
+        
+        await setDoc(docRef, newOrder, { merge: true });
+        console.log(`📠 Synced Forkable Group ${groupInfo.code} (ID: ${newOrder.id})`);
     }
-    await setDoc(docRef, newOrder, { merge: true });
-    console.log(`📠 Synced Forkable Order ${newOrder.id}`);
 }
 
 async function processDoordashEmail(text) {
@@ -390,6 +433,7 @@ async function run() {
                         let bodyText = parsedMail.text || "";
                         let combinedText = subjectHeader + "\n\n" + bodyText;
 
+                        console.log(`Processing email: ${subjectHeader}`);
                         if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('confirm changes')) {
                             await processForkableEmail(combinedText, parsedMail.html);
                         } else if (subjectHeader.toLowerCase().includes('doordash') || subjectHeader.toLowerCase().includes('new catering order')) {

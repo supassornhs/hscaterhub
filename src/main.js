@@ -15,6 +15,8 @@ export function normalizePlatform(rawPlatform) {
     'doordash': 'DoorDash',
     'clubfeast': 'ClubFeast',
     'direct': 'Direct',
+    'manual': 'Direct',
+    'manual entry': 'Direct',
     'forkable': 'Forkable',
     'fooda': 'Fooda',
     'foodja': 'Foodja',
@@ -141,13 +143,7 @@ document.querySelectorAll('.nav-item').forEach(button => {
   });
 });
 
-// Sidebar Toggle Logic
-document.getElementById('sidebar-toggle-btn')?.addEventListener('click', () => {
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar) {
-    sidebar.classList.toggle('collapsed');
-  }
-});
+
 
 // Compute Dynamic Status
 function computeOrderStatus(order) {
@@ -182,6 +178,31 @@ function computeOrderStatus(order) {
   } catch (e) {
     return order.status || 'New';
   }
+}
+
+// Global utility to resolve platform aliases back to official menu titles
+function getOfficialDishName(rawName) {
+    if (!rawName) return 'Unknown Item';
+    const cleanRaw = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    // Look through menu items
+    for (const menu of menuItems) {
+        // 1. Check title match
+        if (menu.title && menu.title.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRaw) {
+            return menu.title;
+        }
+        
+        // 2. Check platform overrides (aliases)
+        if (menu.platformOverrides) {
+            for (const plat of Object.keys(menu.platformOverrides)) {
+                const alias = menu.platformOverrides[plat]?.alias;
+                if (alias && alias.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRaw) {
+                    return menu.title;
+                }
+            }
+        }
+    }
+    return rawName; // Fallback to raw name if no match found
 }
 
 // Render Dashboard
@@ -232,9 +253,9 @@ function renderDashboard() {
     // Dishes
     if (o.items && Array.isArray(o.items)) {
       o.items.forEach(item => {
-        const dishName = item.name || 'Unknown Item';
+        const officialName = getOfficialDishName(item.name);
         const amount = parseInt(item.amount) || 1;
-        dishCounts[dishName] = (dishCounts[dishName] || 0) + amount;
+        dishCounts[officialName] = (dishCounts[officialName] || 0) + amount;
       });
     }
   });
@@ -904,7 +925,7 @@ const platformDetailsContainer = document.getElementById('platform-details-conta
 const menuWeightG = document.getElementById('menu-weight-g');
 const menuPrice = document.getElementById('menu-price');
 
-const menuPlatforms = ['Cater2.me', 'ClubFeast', 'Direct', 'DoorDash', 'ezCater', 'Fooda', 'Foodja', 'Forkable', 'Uber Eats', 'Zerocater'];
+const menuPlatforms = ['Cater2.me', 'ClubFeast', 'Direct', 'DoorDash', 'ezCater', 'Fooda', 'Foodja', 'Forkable', 'Hungry', 'Uber Eats', 'Zerocater'];
 
 // Generate platform rows
 function initPlatformRows() {
@@ -1133,37 +1154,60 @@ if (allergensInput) {
 const tzDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 document.getElementById('prep-date-filter').value = tzDate;
 
-let currentPrepView = 'dish'; // 'dish' or 'comp'
+let currentPrepView = 'order'; // 'dish', 'comp', or 'order'
 
-document.getElementById('prep-view-dish')?.addEventListener('click', (e) => {
+function updatePrepToggles(view) {
+    currentPrepView = view;
+    const views = ['dish', 'comp', 'order'];
+    views.forEach(v => {
+        const btn = document.getElementById(`prep-view-${v}`);
+        const container = document.getElementById(`prep-dash-${v === 'dish' ? 'dish' : v === 'comp' ? 'comp' : 'order'}-container`); // Wait, IDs are different
+        // Let's re-check the IDs in HTML
+    });
+}
+// I'll stick to a simpler approach since the IDs are a bit inconsistent
+document.getElementById('prep-view-dish')?.addEventListener('click', () => {
     currentPrepView = 'dish';
-    e.target.classList.add('active');
-    e.target.style.background = 'var(--primary-accent)';
-    e.target.style.color = 'white';
-    
-    let sibling = document.getElementById('prep-view-comp');
-    sibling.classList.remove('active');
-    sibling.style.background = 'transparent';
-    sibling.style.color = 'var(--text-secondary)';
-    
+    ['dish', 'comp', 'order'].forEach(v => {
+        const btn = document.getElementById(`prep-view-${v}`);
+        if (btn) {
+            btn.style.background = (v === 'dish') ? 'var(--primary-accent)' : 'transparent';
+            btn.style.color = (v === 'dish') ? 'white' : 'var(--text-secondary)';
+        }
+    });
     document.getElementById('prep-dish-container').style.display = 'block';
     document.getElementById('prep-comp-container').style.display = 'none';
+    document.getElementById('prep-order-container').style.display = 'none';
     renderPrepTab();
 });
 
-document.getElementById('prep-view-comp')?.addEventListener('click', (e) => {
+document.getElementById('prep-view-comp')?.addEventListener('click', () => {
     currentPrepView = 'comp';
-    e.target.classList.add('active');
-    e.target.style.background = 'var(--primary-accent)';
-    e.target.style.color = 'white';
-    
-    let sibling = document.getElementById('prep-view-dish');
-    sibling.classList.remove('active');
-    sibling.style.background = 'transparent';
-    sibling.style.color = 'var(--text-secondary)';
-    
+    ['dish', 'comp', 'order'].forEach(v => {
+        const btn = document.getElementById(`prep-view-${v}`);
+        if (btn) {
+            btn.style.background = (v === 'comp') ? 'var(--primary-accent)' : 'transparent';
+            btn.style.color = (v === 'comp') ? 'white' : 'var(--text-secondary)';
+        }
+    });
     document.getElementById('prep-dish-container').style.display = 'none';
     document.getElementById('prep-comp-container').style.display = 'block';
+    document.getElementById('prep-order-container').style.display = 'none';
+    renderPrepTab();
+});
+
+document.getElementById('prep-view-order')?.addEventListener('click', () => {
+    currentPrepView = 'order';
+    ['dish', 'comp', 'order'].forEach(v => {
+        const btn = document.getElementById(`prep-view-${v}`);
+        if (btn) {
+            btn.style.background = (v === 'order') ? 'var(--primary-accent)' : 'transparent';
+            btn.style.color = (v === 'order') ? 'white' : 'var(--text-secondary)';
+        }
+    });
+    document.getElementById('prep-dish-container').style.display = 'none';
+    document.getElementById('prep-comp-container').style.display = 'none';
+    document.getElementById('prep-order-container').style.display = 'block';
     renderPrepTab();
 });
 
@@ -1188,8 +1232,8 @@ function renderPrepTab() {
     targetOrders.forEach(o => {
         if (o.items && Array.isArray(o.items)) {
             o.items.forEach(itm => {
-                let name = itm.name ? itm.name.trim() : "Unknown Dish";
-                let q = parseInt(itm.quantity) || 1;
+                let name = getOfficialDishName(itm.name);
+                let q = parseInt(itm.amount) || 1;
                 
                 if (!dishMap[name]) dishMap[name] = { qty: 0, servings: 0, menuRef: null };
                 dishMap[name].qty += q;
@@ -1198,19 +1242,9 @@ function renderPrepTab() {
     });
 
     // Resolve menu bindings to compute pure servings
+    // Resolve menu bindings to compute pure servings
     Object.keys(dishMap).forEach(dishName => {
-        let cleanName = dishName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        let menuMatch = menuItems.find(m => {
-            if (m.title.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanName) return true;
-            if (m.overrides) {
-                for (let plat of Object.keys(m.overrides)) {
-                   if (m.overrides[plat] && m.overrides[plat].alias && m.overrides[plat].alias.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanName) {
-                       return true;
-                   }
-                }
-            }
-            return false;
-        });
+        let menuMatch = menuItems.find(m => m.title === dishName);
 
         if (menuMatch) {
             dishMap[dishName].menuRef = menuMatch;
@@ -1239,7 +1273,7 @@ function renderPrepTab() {
         }
         tbody.innerHTML = html;
         
-    } else {
+    } else if (currentPrepView === 'comp') {
         const container = document.getElementById('prep-comp-grids');
         let compGroups = {
             'Proteins': {},
@@ -1298,17 +1332,87 @@ function renderPrepTab() {
             `;
         });
         container.innerHTML = html;
+    } else if (currentPrepView === 'order') {
+        const container = document.getElementById('prep-order-grids');
+        let orderGroups = {}; // Key: platform|pickUpTime
+
+        targetOrders.forEach(o => {
+            let plat = normalizePlatform(o.platform);
+            let time = o.pickUpTime || "";
+            let key = `${plat}|${time}`;
+
+            if (!orderGroups[key]) {
+                orderGroups[key] = {
+                    platform: plat,
+                    pickUpTime: time,
+                    items: {}
+                };
+            }
+
+            if (o.items && Array.isArray(o.items)) {
+                o.items.forEach(itm => {
+                    let name = getOfficialDishName(itm.name);
+                    let amt = parseInt(itm.amount) || 1;
+                    orderGroups[key].items[name] = (orderGroups[key].items[name] || 0) + amt;
+                });
+            }
+        });
+
+        let html = '';
+        const sortedGroups = Object.keys(orderGroups).sort();
+        
+        sortedGroups.forEach(key => {
+            const group = orderGroups[key];
+            let itemTags = Object.entries(group.items).map(([name, amt]) => `
+                <div style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 0.4rem 0.75rem; border-radius: 8px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; white-space: nowrap;">
+                    <span style="color: #cbd5e1;">${name}</span>
+                    <strong style="color: #6ee7b7; background: rgba(110, 231, 183, 0.1); padding: 2px 6px; border-radius: 4px;">${amt}x</strong>
+                </div>
+            `).join('');
+
+            html += `
+                <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 1rem; display: flex; align-items: center; gap: 1.5rem; transition: transform 0.2s ease;">
+                    <div style="min-width: 140px; border-right: 1px solid rgba(255,255,255,0.05); padding-right: 1rem;">
+                        <h4 style="margin: 0; color: var(--primary-accent); font-size: 0.95rem; font-weight: 600;">${group.platform}</h4>
+                    </div>
+                    
+                    <div style="flex: 1; display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                        ${itemTags}
+                    </div>
+                    
+                    <div style="text-align: right; min-width: 100px; border-left: 1px solid rgba(255,255,255,0.05); padding-left: 1rem;">
+                        <div style="font-size: 0.6rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;">Pick Up</div>
+                        <div style="font-weight: 600; color: ${group.pickUpTime ? '#6ee7b7' : '#64748b'}; font-size: 0.9rem;">${group.pickUpTime || '---'}</div>
+                    </div>
+                </div>
+            `;
+        });
+
+        if (sortedGroups.length === 0) {
+            html = `<div style="text-align: center; color: #64748b; padding: 4rem; background: rgba(255,255,255,0.01); border-radius: 16px; border: 1px dashed rgba(255,255,255,0.1);">No orders matched the selected date.</div>`;
+        }
+        container.innerHTML = html;
     }
 }
 
 // Sidebar Toggle Logic
-const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
-if (sidebarToggleBtn) {
-    sidebarToggleBtn.addEventListener('click', () => {
-        document.querySelector('.sidebar').classList.toggle('collapsed');
-        document.querySelector('.main-content').classList.toggle('expanded');
-    });
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const mainContent = document.querySelector('.main-content');
+    const toggleSvg = document.getElementById('toggle-icon-svg');
+    
+    if (sidebar) {
+        sidebar.classList.toggle('collapsed');
+        if (mainContent) mainContent.classList.toggle('expanded');
+        
+        const isCollapsed = sidebar.classList.contains('collapsed');
+        if (toggleSvg) {
+            toggleSvg.style.transform = isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+    }
 }
+
+document.getElementById('sidebar-toggle-btn')?.addEventListener('click', toggleSidebar);
 
 // Export Orders Logic
 document.getElementById('export-orders-btn')?.addEventListener('click', () => {
