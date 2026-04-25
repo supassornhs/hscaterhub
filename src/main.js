@@ -1364,19 +1364,19 @@ function renderPrepTab() {
         sortedGroups.forEach(key => {
             const group = orderGroups[key];
             let itemTags = Object.entries(group.items).map(([name, amt]) => `
-                <div style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 0.4rem 0.75rem; border-radius: 8px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; white-space: nowrap;">
-                    <span style="color: #cbd5e1;">${name}</span>
-                    <strong style="color: #6ee7b7; background: rgba(110, 231, 183, 0.1); padding: 2px 6px; border-radius: 4px;">${amt}x</strong>
+                <div style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <span style="color: #f8fafc; font-weight: 500;">${name}</span>
+                    <strong style="color: #6ee7b7; background: rgba(110, 231, 183, 0.1); padding: 4px 10px; border-radius: 6px; font-size: 1rem;">${amt}x</strong>
                 </div>
             `).join('');
 
             html += `
-                <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 1rem; display: flex; align-items: center; gap: 1.5rem; transition: transform 0.2s ease;">
-                    <div style="min-width: 140px; border-right: 1px solid rgba(255,255,255,0.05); padding-right: 1rem;">
-                        <h4 style="margin: 0; color: var(--primary-accent); font-size: 0.95rem; font-weight: 600;">${group.platform}</h4>
+                <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 1.25rem; display: flex; align-items: stretch; gap: 1.5rem; transition: transform 0.2s ease;">
+                    <div style="min-width: 140px; border-right: 1px solid rgba(255,255,255,0.05); padding-right: 1rem; display: flex; align-items: center;">
+                        <h4 style="margin: 0; color: var(--primary-accent); font-size: 1rem; font-weight: 700;">${group.platform}</h4>
                     </div>
                     
-                    <div style="flex: 1; display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
                         ${itemTags}
                     </div>
                     
