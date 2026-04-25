@@ -102,6 +102,8 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
             const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
             let isSummarySection = false;
 
+            let skipMealCountFor = null;
+
             data.forEach((row, idx) => {
                 if (!row || idx < 1 || isSummarySection) return;
                 let countRaw = String(row[0] || "").trim();
@@ -112,12 +114,16 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 if (mealRaw.toLowerCase().includes('sides') || countRaw.toLowerCase().includes('totals from above')) {
                     isSummarySection = true; return;
                 }
-                if (!mealRaw || mealRaw.toLowerCase() === 'meal' || countRaw.toLowerCase() === 'count') return;
+                if (!mealRaw || mealRaw.toLowerCase() === 'meal' || countRaw.toLowerCase() === 'count') {
+                    skipMealCountFor = null;
+                    return;
+                }
 
                 if (pickupTime && pickupTime.toLowerCase() !== 'pickup') pickupTimes.push(pickupTime);
 
                 let countMatch = countRaw.match(/(\d+)/);
                 if (countMatch) {
+                    // This row defines a group total (e.g., 6x)
                     let mainCount = parseInt(countMatch[1]);
                     let matchedMeal = mealRaw;
                     for (const m of menuItemsMap) {
@@ -126,60 +132,65 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                         }
                     }
                     allItems.push({ name: matchedMeal, amount: mainCount, notes: String(row[3] || "").trim() });
+                    skipMealCountFor = mealRaw; // Skip subsequent rows for this meal group
+                } else {
+                    // No count in Col A. If this is a new meal, it's a single order (1x)
+                    if (mealRaw !== skipMealCountFor) {
+                        let matchedMeal = mealRaw;
+                        for (const m of menuItemsMap) {
+                            if (mealRaw.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && mealRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                                matchedMeal = m.title; break;
+                            }
+                        }
+                        allItems.push({ name: matchedMeal, amount: 1, notes: String(row[3] || "").trim() });
+                        // We don't set skipMealCountFor here because individual rows might follow each other
+                    }
                 }
 
+                // ALWAYS count sides from Column C
                 if (optionsRaw.toLowerCase().includes("add side:")) {
                     let sideRaw = optionsRaw.replace(/add side[:\s]*/i, '').trim();
                     let matchedSide = sideRaw;
                     for (const m of menuItemsMap) {
-                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && sideRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                            matchedSide = m.title; break;
-                        }
+                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
                     }
                     allItems.push({ name: matchedSide, amount: 1, notes: "" });
                 }
             });
-        } catch (e) { console.error(`❌ Excel Error:`, e); }
+        } catch (e) {
+            console.error(`❌ Excel Error:`, e);
+        }
     }
 
-    // 2. HTML Table & Text Parsing (Fallback or Supplemental)
-    if (htmlStr) {
+    // 2. HTML Table Parsing (Only if Excel failed or wasn't there)
+    if (allItems.length === 0 && htmlStr) {
         const $ = cheerio.load(htmlStr);
         $('table tr').each((i, row) => {
             const cells = $(row).children('td, th');
             if (cells.length >= 3) {
                 let mealTxt = $(cells[1]).text().trim();
-                if (mealTxt && mealTxt.toLowerCase() !== 'meal' && !mealTxt.toLowerCase().includes('total')) {
+                let lowerTxt = mealTxt.toLowerCase();
+                if (mealTxt && lowerTxt !== 'meal' && !lowerTxt.includes('total') && !lowerTxt.includes('sides')) {
                     let matchedMeal = mealTxt;
                     for (const m of menuItemsMap) {
-                        if (mealTxt.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && mealTxt.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                        if (lowerTxt.includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && lowerTxt.includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
                             matchedMeal = m.title; break;
                         }
                     }
                     allItems.push({ name: matchedMeal, amount: 1, notes: $(cells[3]).text().trim() });
+
+                    let optionsTxt = $(cells[2]).text().trim();
+                    if (optionsTxt.toLowerCase().includes("add side:")) {
+                        let sideRaw = optionsTxt.replace(/add side[:\s]*/i, '').trim();
+                        let matchedSide = sideRaw;
+                        for (const m of menuItemsMap) {
+                            if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
+                        }
+                        allItems.push({ name: matchedSide, amount: 1, notes: "" });
+                    }
                 }
             }
         });
-        
-        // Scan for "Sides" summary specifically
-        let sidesHeader = $("td:contains('Sides'), th:contains('Sides'), b:contains('Sides')").last();
-        if (sidesHeader.length > 0) {
-            let nextItems = sidesHeader.closest('table').find('tr');
-            nextItems.each((i, r) => {
-                 let text = $(r).text();
-                 if (text.includes('x ')) {
-                     let match = text.match(/(\d+)x\s+(.+)/);
-                     if (match) {
-                         let name = match[2].trim();
-                         let matched = name;
-                         for (const m of menuItemsMap) {
-                            if (name.toLowerCase().includes(m.title.toLowerCase())) { matched = m.title; break; }
-                         }
-                         allItems.push({ name: matched, amount: parseInt(match[1]), notes: "(Summary Side)" });
-                     }
-                 }
-            });
-        }
     }
 
     if (allItems.length === 0) {
