@@ -9,6 +9,17 @@ import * as cheerio from 'cheerio';
 
 dotenv.config();
 
+// Fix for Node <20 environments where 'File' is not global
+if (typeof global.File === 'undefined') {
+    global.File = class File extends Blob {
+        constructor(parts, filename, options = {}) {
+            super(parts, options);
+            this.name = filename;
+            this.lastModified = options.lastModified || Date.now();
+        }
+    };
+}
+
 const firebaseConfig = {
   apiKey: "AIzaSyCj__TCfYSF-1y4uR-UOId_aPWWwy4-W5A",
   authDomain: "hscaterhub.firebaseapp.com",
