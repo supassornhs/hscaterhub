@@ -4,6 +4,9 @@ import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
 import * as dotenv from 'dotenv';
 import { sendAlertEmail } from './mailer.js';
+import * as XLSX from 'xlsx';
+import * as cheerio from 'cheerio';
+
 dotenv.config();
 
 const firebaseConfig = {
@@ -43,18 +46,21 @@ const config = {
     }
 };
 
-async function processForkableEmail(text, htmlStr = "") {
-    console.log("-> Parsing Forkable payload with multi-group support...");
+async function processForkableEmail(text, htmlStr = "", attachments = []) {
+    console.log("-> Parsing Forkable payload via Enhanced Parser (Excel + HTML)...");
     
-    // 1. Get the general date (applies to all groups in this email)
+    // 1. Get the general date
     let dateMatch = text.match(/DATE\[?\n\s*\]?\s*(.+?202\d|.+?(?=LOCATION|\n\n))/i) || 
                     text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ a-z]*\s+\d{1,2}(?:\s*,\s*202\d)?/i) ||
-                    text.match(/Forkable Pickup(?: Date)?\s+([A-Za-z]+ \d{1,2}, \d{4})/i);
+                    text.match(/Forkable Pickup(?: Date)?\s+([A-Za-z]+ \d{1,2}, \d{4})/i) ||
+                    text.match(/Forkable Pickup\s+(?:[A-Za-z]+,\s*)?([A-Za-z]+\s+\d{1,2})/i); // Matches: Forkable Pickup Thursday, Apr 23
     
     let rawDateStr = dateMatch ? (dateMatch[1] || dateMatch[0]) : new Date().toDateString();
     let cleanDate = new Date(rawDateStr);
-    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0) && rawDateStr) {
-        cleanDate = new Date(`${rawDateStr} ${new Date().getFullYear()}`);
+    
+    // Fix: If year is omitted, JS defaults to year 2001. We need to enforce current year.
+    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0 || cleanDate.getFullYear() === 2001) && rawDateStr) {
+        cleanDate = new Date(`${rawDateStr.replace(/^[A-Za-z]+,\s*/, '')} ${new Date().getFullYear()}`);
     }
     
     const year = cleanDate.getFullYear();
@@ -66,7 +72,7 @@ async function processForkableEmail(text, htmlStr = "") {
     let sfTodayMidnight = new Date(sfDateStr);
     let currentStatus = cleanDate < sfTodayMidnight ? "Completed" : "New";
 
-    // 2. Fetch menu items once for matching
+    // 2. Fetch menu items for matching
     let menuItemsMap = [];
     try {
         const menuDocs = await getDocs(collection(db, 'menus'));
@@ -74,188 +80,211 @@ async function processForkableEmail(text, htmlStr = "") {
         menuItemsMap.sort((a,b) => b.title.length - a.title.length);
     } catch(e) { console.log("Menu match fallback failed.", e); }
 
-    // 3. Line-by-line parsing for headers and groups
-    let lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    let currentHeader = { time: "10:00AM", driver: "TBD" };
-    let groups = [];
-    let currentGroup = null;
-    let buffer = "";
-    
-    const processBuffer = (itemText) => {
-        if (!itemText || !currentGroup) return;
-        
-        let priceMatch = itemText.match(/\$([0-9,.]+)/);
-        if (!priceMatch && !itemText.includes('>>') && !itemText.includes('»')) return; // Ignore blocks with no price or modifier symbols
-        
-        let price = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
-        currentGroup.subtotal += price;
-        
-        let content = itemText.trim();
-        // Remove ALL price strings globally to ensure they don't leak into notes
-        content = content.replace(/\$[0-9,.]+/g, '').trim();
-        
-        // Final aggressive cleanup of structural noise
-        content = content.replace(/\d{1,2}:\d{2}\s*[APM]{2}.*$/gi, '').trim();
-        content = content.replace(/DRIVER:.*$/gi, '').trim();
-        content = content.replace(/[-]{3,}/g, '').trim();
-        content = content.replace(/[\n\t]/g, ' ').trim();
-        content = content.replace(/Any hot sauce.*$/gi, '').trim(); // Remove specific junk request observed
-        
-        // Remove person name
-        content = content.replace(/^[A-Z][a-z0-9\s]* [A-Z]\.\s+/, '').trim();
-        
-        // Skip structural headers, footers, or totals
-        const lowercaseContent = content.toLowerCase();
-        if (!content || 
-            lowercaseContent.includes('items') || 
-            lowercaseContent.includes('group') || 
-            lowercaseContent.includes('for your records') || 
-            lowercaseContent.includes('projected sub total') ||
-            lowercaseContent.includes('balance due') ||
-            lowercaseContent.includes('statement') ||
-            lowercaseContent.includes('driver:') ||
-            content.length < 3) return;
+    let allGroups = {};
+    let earliestTimeFallback = "10:30AM";
+    let xlsxAttachments = attachments.filter(a => a.filename && a.filename.toLowerCase().endsWith('.xlsx'))
+                                       .sort((a, b) => (a.filename.toLowerCase().includes('orders') ? -1 : 1));
 
-        let chunks = content.split(/[┬╗»>>]/).map(c => c.trim()).filter(c => c);
-        if (chunks.length === 0) return;
+    // SCENARIO 1: Process Excel Attachment
+    for (const xlsxAttach of xlsxAttachments) {
+        console.log(`- Processing Excel for Grouping: ${xlsxAttach.filename}...`);
+        try {
+            const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
+            console.log(`- Workbook Sheets: ${workbook.SheetNames.join(', ')}`);
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-        let mainRaw = chunks[0];
-        let mods = chunks.slice(1);
+            console.log(`- Spreadsheet has ${data.length} rows.`);
+            if (data.length > 0) console.log(`- Row 0 Raw: ${JSON.stringify(data[0])}`);
+            if (data.length > 1) console.log(`- Row 1 Raw: ${JSON.stringify(data[1])}`);
+            if (data.length > 2) console.log(`- Row 2 Raw: ${JSON.stringify(data[2])}`);
 
-        // Resolve Main Dish - Strict Matching
-        let mainDish = mainRaw;
-        let matched = false;
-        for (const m of menuItemsMap) {
-            let title = m.title.toLowerCase();
-            let alias = m.platformOverrides?.Forkable?.alias?.toLowerCase();
-            
-            const isMatch = (text, pattern) => {
-                if (!pattern) return false;
-                // Strict check: the dish title must be present as a distinct entity
-                return text.toLowerCase().includes(pattern);
-            };
+            let lastClub = "";
+            let lastTime = earliestTimeFallback;
+            data.forEach((row, idx) => {
+                if (!row || idx < 1) return; 
+                
+                let mealRaw = String(row[1] || "").trim();
+                let clubCode = String(row[5] || "").trim();
+                let pickupTime = String(row[6] || "").trim();
 
-            if (isMatch(mainRaw, title) || isMatch(mainRaw, alias)) {
-                mainDish = m.title;
-                matched = true;
-                break;
-            }
-        }
-        
-        // If not matched to a menu item, and we suspect it's a driver/person name, skip
-        if (!matched && (mainRaw.split(' ').length <= 2 || mainRaw.includes('---'))) {
-            console.log(`  - Skipping suspected noise: ${mainRaw}`);
-            return;
-        }
+                // Forward fill for merged cells
+                if (clubCode) lastClub = clubCode;
+                else clubCode = lastClub;
 
-        console.log(`  - Adding: ${mainDish} (${matched ? 'Matched' : 'RAW'}) with ${mods.length} mods`);
+                if (pickupTime) lastTime = pickupTime;
+                else pickupTime = lastTime;
 
-        // Add parent dish with mods in note
-        let parentNote = mods.join(", ").replace(/^(Add Side|Add|Side)[:\s]*/gi, '').trim();
-        currentGroup.rawItems.push({ name: mainDish, amount: 1, notes: parentNote ? "Add Side: " + parentNote : "" });
+                console.log(`  [Row ${idx}] Meal: "${mealRaw}", Club: "${clubCode}"`);
 
-        // Add each mod as its own item for global summation IF it is a recognized menu item
-        for (let mod of mods) {
-            let cleanMod = mod.replace(/^(Add Side|Add|Side)[:\s]*/gi, '').trim();
-            let resolvedMod = null;
-            for (const m of menuItemsMap) {
-                let match = cleanMod.toLowerCase().includes(m.title.toLowerCase());
-                if (!match && m.platformOverrides?.Forkable?.alias) {
-                    match = cleanMod.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase());
+                // Skip header/footer noise, but allow specific names even if they contain 'meal'
+                if (!mealRaw || !clubCode) return;
+                const lowMeal = mealRaw.toLowerCase();
+                if (lowMeal === 'meal' || lowMeal.includes('total') || lowMeal.includes('holy shred') || lowMeal.includes('regular individual')) return;
+
+                let optionsRaw = String(row[2] || "").trim();
+                let specialNotes = String(row[3] || "").trim();
+
+                if (!allGroups[clubCode]) {
+                    allGroups[clubCode] = {
+                        items: [],
+                        time: pickupTime,
+                        subtotal: 0
+                    };
                 }
-                if (match) {
-                    resolvedMod = m.title;
-                    break;
+
+                // 1. Process Main Meal
+                let matchedMeal = mealRaw;
+                for (const m of menuItemsMap) {
+                    if (mealRaw.toLowerCase().includes(m.title.toLowerCase()) || 
+                        (m.platformOverrides?.Forkable?.alias && mealRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                        matchedMeal = m.title;
+                        break;
+                    }
                 }
-            }
-            if (resolvedMod) {
-                currentGroup.rawItems.push({ name: resolvedMod, amount: 1, notes: "" });
-            }
-        }
-    };
+                allGroups[clubCode].items.push({ name: matchedMeal, amount: 1, notes: specialNotes });
 
-    for (let line of lines) {
-        // Trigger 1: Structural markers (Header or Time)
-        let hMatch = line.match(/\d{1,2}:\d{2}\s*[APM]{2}/i) || line.match(/DRIVER:/i) || line.match(/---/);
-        let gMatch = line.match(/Group\s+([A-Z]{1,3})/i);
-        
-        // Trigger 3: New Person - support "Alek Q.", "Roberta Woo W.", "J. P." etc.
-        let pMatch = line.match(/^\s*[A-Z][a-z0-9]*\s+[A-Z][a-z]*(\s+[A-Z][a-z]*)*\s+[A-Z]\./) || 
-                     line.match(/^\s*[A-Z][a-z]+\s+[A-Z]\./);
-
-        if (hMatch || gMatch || pMatch) {
-            // Flush current buffer before structural switch
-            processBuffer(buffer);
-            buffer = "";
-
-            if (hMatch) {
-                let tMatch = line.match(/(\d{1,2}:\d{2}\s*[APM]{2})/i);
-                if (tMatch) currentHeader.time = tMatch[1];
-                let dMatch = line.match(/DRIVER:\s*(.*)/i);
-                if (dMatch) currentHeader.driver = dMatch[1].trim();
-                continue;
-            }
-            if (gMatch) {
-                let gm = line.match(/Group\s+([A-Z]{1,3})/i);
-                if (currentGroup) groups.push(currentGroup);
-                currentGroup = {
-                    code: gm[1],
-                    time: currentHeader.time,
-                    driver: currentHeader.driver,
-                    rawItems: [],
-                    subtotal: 0
-                };
-                continue;
-            }
-            if (pMatch) {
-                buffer = line;
-                continue;
-            }
-        }
-        buffer += (buffer ? " " : "") + line;
+                // 2. Process Side (if "Add Side:" exists in Column C)
+                if (optionsRaw.toLowerCase().includes("add side:")) {
+                    let sideRaw = optionsRaw.replace(/add side[:\s]*/i, '').trim();
+                    let matchedSide = sideRaw;
+                    for (const m of menuItemsMap) {
+                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase()) || 
+                            (m.platformOverrides?.Forkable?.alias && sideRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                            matchedSide = m.title;
+                            break;
+                        }
+                    }
+                    allGroups[clubCode].items.push({ name: matchedSide, amount: 1, notes: "" });
+                }
+            });
+            if (Object.keys(allGroups).length > 0) break;
+        } catch (e) { console.error(`❌ Excel Grouping Error:`, e); }
     }
-    processBuffer(buffer);
-    if (currentGroup) groups.push(currentGroup);
 
-    console.log(`- Identified ${groups.length} groups.`);
-    for (let groupInfo of groups) {
-        console.log(`- Processing group ${groupInfo.code} (${groupInfo.rawItems.length} items)...`);
-        if (groupInfo.rawItems.length === 0) continue;
+    // SCENARIO 2: HTML Fallback (If no Excel)
+    if (Object.keys(allGroups).length === 0 && htmlStr) {
+        console.log("- No Excel found. Parsing HTML table with grouping...");
+        const $ = cheerio.load(htmlStr);
+        
+        // 2a. Check for regular tables
+        let lastClub = "";
+        let lastTime = earliestTimeFallback;
+        $('table tr').each((i, row) => {
+            const cells = $(row).children('td, th');
+            if (cells.length >= 6) { 
+                let mealTxt = $(cells[1]).text().trim();
+                let clubTxt = $(cells[5]).text().trim();
+                let timeTxt = $(cells[6]).text().trim();
+                let notes = $(cells[3]).text().trim(); 
 
-        // Consolidate final items
+                if (clubTxt) lastClub = clubTxt;
+                else clubTxt = lastClub;
+
+                if (timeTxt) lastTime = timeTxt;
+                else timeTxt = lastTime;
+
+                if (mealTxt && clubTxt) {
+                    const lowMeal = mealTxt.toLowerCase();
+                    if (lowMeal === 'meal' || lowMeal.includes('total') || lowMeal.includes('regular individual')) return;
+
+                    if (!allGroups[clubTxt]) {
+                        allGroups[clubTxt] = { items: [], time: timeTxt || lastTime, subtotal: 0 };
+                    }
+                    
+                    let matchedMeal = mealTxt;
+                    for (const m of menuItemsMap) {
+                        if (mealTxt.toLowerCase().includes(m.title.toLowerCase()) || 
+                            (m.platformOverrides?.Forkable?.alias && mealTxt.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                            matchedMeal = m.title; break;
+                        }
+                    }
+                    allGroups[clubTxt].items.push({ name: matchedMeal, amount: 1, notes: notes });
+
+                    // Sides in Column C
+                    let optionsTxt = $(cells[2]).text().trim();
+                    if (optionsTxt.toLowerCase().includes("add side:")) {
+                        let sideRaw = optionsTxt.replace(/add side[:\s]*/i, '').trim();
+                        let matchedSide = sideRaw;
+                        for (const m of menuItemsMap) {
+                            if (sideRaw.toLowerCase().includes(m.title.toLowerCase()) || 
+                                (m.platformOverrides?.Forkable?.alias && sideRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                                matchedSide = m.title; break;
+                            }
+                        }
+                        allGroups[clubTxt].items.push({ name: matchedSide, amount: 1, notes: "" });
+                    }
+                }
+            }
+        });
+
+        // 2b. Ad-hoc "Action Required" section (no club info usually, so we default to "ALL" or skip)
+        const adHocHeader = $('td:contains("Requested Additional Meals"), b:contains("Requested Additional Meals")').last();
+        if (adHocHeader.length > 0) {
+            console.log("- Processing Ad-hoc additions from Action Required email...");
+            $('tr, div, p').each((i, el) => {
+                const text = $(el).text();
+                const match = text.match(/([A-Z][a-z0-9]*\s+[A-Z][a-z]*)\s+(.+?)\s+\$([0-9.]+)/);
+                if (match) {
+                    let dishRaw = match[2].trim();
+                    let club = "AD-HOC"; 
+                    if (!allGroups[club]) allGroups[club] = { items: [], time: earliestTimeFallback, subtotal: 0 };
+                    
+                    let matchedMeal = dishRaw;
+                    for (const m of menuItemsMap) {
+                        if (dishRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedMeal = m.title; break; }
+                    }
+                    allGroups[club].items.push({ name: matchedMeal, amount: 1, notes: "" });
+                }
+            });
+        }
+    }
+
+    if (Object.keys(allGroups).length === 0) {
+        console.log("No grouped items found for Forkable.");
+        return;
+    }
+
+    // Sync each group as a separate order
+    for (const [club, groupData] of Object.entries(allGroups)) {
+        // Consolidate items within the group
         let consolidated = {};
-        for (const fi of groupInfo.rawItems) {
-            let key = fi.name + "|||" + fi.notes;
+        for (const fi of groupData.items) {
+            let key = fi.name + "|||" + (fi.notes || "");
             if (!consolidated[key]) consolidated[key] = { ...fi };
             else consolidated[key].amount += fi.amount;
         }
         let finalItems = Object.values(consolidated);
 
-        let orderId = `FRK-${groupInfo.code}-${formattedDate.replace(/-/g,'')}-${groupInfo.time.replace(/[:\s]/g,'')}`;
+        let orderId = club; // The order ID is identified by column F
+        
         let newOrder = {
-            id: orderId.toUpperCase(),
+            id: orderId, // The true ID as requested
             platform: "Forkable",
-            customerName: `Forkable ${groupInfo.code}`,
+            customerName: `Forkable ${club}`,
             typeOfOrder: "Meal Manager",
             deliveryDate: formattedDate,
-            deliveryTime: groupInfo.time,
+            deliveryTime: groupData.time,
             deliveryMethod: "Platform",
-            pickUpTime: groupInfo.time,
-            subtotal: groupInfo.subtotal,
-            total: groupInfo.subtotal,
-            netPayout: groupInfo.subtotal,
+            pickUpTime: groupData.time,
+            subtotal: 0, 
+            total: 0,
+            netPayout: 0,
             status: currentStatus,
-            overallNotes: `Group: ${groupInfo.code}. Driver: ${groupInfo.driver}.`,
+            overallNotes: `Group: ${club}. Source: Excel.`,
             items: finalItems,
             createdAt: new Date().toISOString()
         };
 
-        const docRef = doc(db, 'orders', newOrder.id);
+        const docRef = doc(db, 'orders', `FRK-${club}-${formattedDate.replace(/-/g,'')}`); // Keep unique path in db to prevent overwriting other days
         const docSnap = await getDoc(docRef);
-        if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) continue;
-        
+        if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) {
+            console.log(`- Skipped grouped Forkable order ${orderId} (Manual Override).`);
+            continue;
+        }
+
         await setDoc(docRef, newOrder, { merge: true });
-        console.log(`📠 Synced Forkable Group ${groupInfo.code} (ID: ${newOrder.id})`);
+        console.log(`📠 Synced grouped Forkable order: ${orderId}`);
     }
 }
 
@@ -401,41 +430,37 @@ async function run() {
     }
 
     imaps.connect(config).then(function (connection) {
+        console.log("✅ IMAP Connected.");
         return connection.openBox('INBOX').then(async function () {
+            console.log("✅ INBOX Opened.");
             // Dynamically look strictly at emails received only within the last 48 hours to minimize log spam
             const lookbackDate = new Date();
             lookbackDate.setDate(lookbackDate.getDate() - 2);
             const searchCriteria = [
                 ['SINCE', lookbackDate],
-                ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Confirm Changes'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]]
+                ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Confirm Changes'], ['OR', ['SUBJECT', 'Action Required'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]]]
             ];
             const fetchOptions = {
                 bodies: ['HEADER', 'TEXT', ''],
                 markSeen: false 
             };
 
-            console.log("📡 Scanning Inbox for unread Delivery emails...");
+            console.log("📡 Scanning Inbox for delivery emails...");
             try {
                 let messages = await connection.search(searchCriteria, fetchOptions);
-
-                if (messages.length === 0) {
-                    console.log("✉️ Zero new unread delivery orders found in inbox.");
-                } else {
-                    console.log(`✉️ Found ${messages.length} new incoming unread order(s)! Processing...`);
-                }
+                console.log(`✉️ Search returned ${messages.length} messages.`);
 
                 for (let item of messages) {
                     let all = item.parts.find(p => p.which === '');
-                    let subjectHeader = item.parts.find(p => p.which === 'HEADER').body.subject[0] || '';
+                    let subjectHeader = (item.parts.find(p => p.which === 'HEADER').body.subject || [''])[0] || '';
                     
+                    console.log(`[Email Scraper] Processing subject: "${subjectHeader}"`);
                     try {
                         let parsedMail = await simpleParser(all.body);
                         let bodyText = parsedMail.text || "";
                         let combinedText = subjectHeader + "\n\n" + bodyText;
-
-                        console.log(`Processing email: ${subjectHeader}`);
-                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('confirm changes')) {
-                            await processForkableEmail(combinedText, parsedMail.html);
+                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('confirm changes') || subjectHeader.toLowerCase().includes('action required')) {
+                            await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments);
                         } else if (subjectHeader.toLowerCase().includes('doordash') || subjectHeader.toLowerCase().includes('new catering order')) {
                             await processDoordashEmail(combinedText);
                         }
