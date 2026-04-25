@@ -23,7 +23,7 @@ const db = getFirestore(app);
 
 async function logScraperAction(action, data) {
     try {
-        await addDoc(collection(db, 'system', 'scraper_logs'), {
+        await addDoc(collection(db, 'scraper_logs'), {
             action,
             data,
             timestamp: new Date().toISOString()
