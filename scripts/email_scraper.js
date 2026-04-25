@@ -93,156 +93,45 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     let allItems = [];
     let pickupTimes = [];
 
-    // 1. Excel Parsing
-    let xlsxAttachments = attachments.filter(a => a.filename && a.filename.toLowerCase().endsWith('.xlsx'));
-    for (const xlsxAttach of xlsxAttachments) {
-        try {
-            const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-            let mainBlocks = [];
-            let activeBlock = null;
-            let summarySides = [];
-            let inSidesSection = false;
-            let rawLines = [];
-
-            data.forEach((row, idx) => {
-                if (!row || idx < 1) return;
-                let colA = String(row[0] || "").trim();
-                let colB = String(row[1] || "").trim();
-                let colD = String(row[3] || "").trim();
-                let colG = String(row[6] || "").trim();
-
-                if (idx < 50) rawLines.push(`Row ${idx}: A=[${colA}] B=[${colB}] D=[${colD}]`);
-
-                // Detect the Start of the Sides Summary Section
-                let lowerA = colA.toLowerCase();
-                if (lowerA.includes("totals from above") || lowerA.includes("(totals from")) {
-                    inSidesSection = true; 
-                    return;
-                }
-
-                if (!inSidesSection) {
-                    // --- MEAL BLOCK LOGIC ---
-                    let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
-                    if (countMatch && !lowerA.includes("totals")) {
-                        // START OF A NEW MEAL BLOCK
-                        activeBlock = {
-                            meal: colB,
-                            groupTotal: parseInt(countMatch[1]),
-                            rows: [],
-                            pickupTime: colG
-                        };
-                        mainBlocks.push(activeBlock);
-                    }
-                    if (activeBlock) {
-                        // We add this row's note to the current block
-                        activeBlock.rows.push({ note: colD, time: colG });
-                    }
-                } else {
-                    // --- SIDES SUMMARY LOGIC ---
-                    let countMatch = colA.match(/(\d+)/);
-                    if (countMatch && colB && !colB.toLowerCase().includes("sides")) {
-                        summarySides.push({ name: colB, amount: parseInt(countMatch[1]) });
-                    }
-                }
-            });
-
-            await logScraperAction("Excel Diagnostic", { date: formattedDate, rawLines });
-
-            mainBlocks.forEach(block => {
-                if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
-                    pickupTimes.push(block.pickupTime);
-                }
-                
-                let noteGroups = {};
-                let totalRowsWithNotes = 0;
-                block.rows.forEach(r => {
-                    if (r.note && r.note.trim().length > 1) {
-                        let cleanNote = r.note.trim();
-                        noteGroups[cleanNote] = (noteGroups[cleanNote] || 0) + 1;
-                        totalRowsWithNotes++;
-                    }
-                });
-
-                let baseCount = block.groupTotal - totalRowsWithNotes;
-                
-                // --- SMART MATCHING ---
-                // We use the raw name from Col B, but try to find the OFFICIAL menu item for ID/Images
-                let officialName = block.meal;
-                for (const m of menuItemsMap) {
-                    let titleLower = m.title.toLowerCase();
-                    let bLower = block.meal.toLowerCase();
-                    let alias = (m.platformOverrides?.Forkable?.alias || "").toLowerCase();
-                    
-                    // Only match if the title is an EXACT match or a very high-confidence keyword match
-                    if (bLower === titleLower || (alias && bLower === alias) || bLower.includes(titleLower)) {
-                        officialName = m.title;
-                        break;
-                    }
-                }
-
-                // Push base version (no notes)
-                if (baseCount > 0) {
-                    allItems.push({ name: officialName, amount: baseCount, notes: "" });
-                }
-
-                // Push versions with notes
-                for (const noteText in noteGroups) {
-                    allItems.push({ name: officialName, amount: noteGroups[noteText], notes: noteText });
-                }
-            });
-
-            // Add the summarized sides
-            summarySides.forEach(side => {
-                let officialSide = side.name;
-                for (const m of menuItemsMap) {
-                    let sLower = side.name.toLowerCase();
-                    let tLower = m.title.toLowerCase();
-                    if (sLower === tLower || sLower.includes(tLower)) {
-                        officialSide = m.title; break;
-                    }
-                }
-                allItems.push({ name: officialSide, amount: side.amount, notes: "" });
-            });
-        } catch (e) {
-            console.error(`❌ Excel Error:`, e);
-        }
-    }
-
-    // 2. HTML Table Parsing (Only if Excel failed or wasn't there)
-    if (allItems.length === 0 && htmlStr) {
+    // --- PRIMARY: HTML Table Parsing (The Email Itself) ---
+    if (htmlStr) {
         const $ = cheerio.load(htmlStr);
         $('table tr').each((i, row) => {
             const cells = $(row).children('td, th');
             if (cells.length >= 3) {
+                let countTxt = $(cells[0]).text().trim();
                 let mealTxt = $(cells[1]).text().trim();
                 let lowerTxt = mealTxt.toLowerCase();
-                if (mealTxt && lowerTxt !== 'meal' && !lowerTxt.includes('total') && !lowerTxt.includes('sides')) {
-                    let matchedMeal = mealTxt;
-                    for (const m of menuItemsMap) {
-                        if (lowerTxt.includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && lowerTxt.includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                            matchedMeal = m.title; break;
-                        }
-                    }
-                    allItems.push({ name: matchedMeal, amount: 1, notes: $(cells[3]).text().trim() });
 
-                    let optionsTxt = $(cells[2]).text().trim();
-                    if (optionsTxt.toLowerCase().includes("add side:")) {
-                        let sideRaw = optionsTxt.replace(/add side[:\s]*/i, '').trim();
-                        let matchedSide = sideRaw;
-                        for (const m of menuItemsMap) {
-                            if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
-                        }
-                        allItems.push({ name: matchedSide, amount: 1, notes: "" });
+                // Skip header or footer rows
+                if (!mealTxt || lowerTxt === 'meal' || lowerTxt.includes('total') || lowerTxt.includes('sides')) return;
+
+                // Handle Meal
+                let amount = parseInt(countTxt) || 1;
+                let matchedMeal = mealTxt;
+                for (const m of menuItemsMap) {
+                    if (lowerTxt.includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && lowerTxt.includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                        matchedMeal = m.title; break;
                     }
+                }
+                allItems.push({ name: matchedMeal, amount: amount, notes: $(cells[3]).text().trim() });
+
+                // Handle Sides in Column 3
+                let optionsTxt = $(cells[2]).text().trim();
+                if (optionsTxt.toLowerCase().includes("add side:")) {
+                    let sideRaw = optionsTxt.replace(/add side[:\s]*/i, '').trim();
+                    let matchedSide = sideRaw;
+                    for (const m of menuItemsMap) {
+                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
+                    }
+                    allItems.push({ name: matchedSide, amount: amount, notes: "" });
                 }
             }
         });
     }
 
     if (allItems.length === 0) {
-        await logScraperAction("Forkable Skip", { reason: "No items parsed", formattedDate });
+        await logScraperAction("Forkable Skip", { reason: "No items found in email HTML", formattedDate });
         return;
     }
 
