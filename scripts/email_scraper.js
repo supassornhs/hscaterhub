@@ -89,25 +89,45 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
+            let isSummarySection = false;
+
             data.forEach((row, idx) => {
-                if (!row || idx < 1) return; 
+                if (!row || idx < 1 || isSummarySection) return;
+
+                let countRaw = String(row[0] || "").trim();
                 let mealRaw = String(row[1] || "").trim();
                 let optionsRaw = String(row[2] || "").trim();
                 let specialNotes = String(row[3] || "").trim();
                 let pickupTime = String(row[6] || "").trim();
 
-                if (!mealRaw || mealRaw.toLowerCase() === 'meal' || mealRaw.toLowerCase().includes('total') || mealRaw.toLowerCase().includes('holy shred')) return;
-                if (pickupTime) pickupTimes.push(pickupTime);
+                let lowerMeal = mealRaw.toLowerCase();
+                let lowerCount = countRaw.toLowerCase();
 
-                let matchedMeal = mealRaw;
-                for (const m of menuItemsMap) {
-                    if (mealRaw.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && mealRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                        matchedMeal = m.title; break;
-                    }
+                // If we hit the Sides summary block, stop processing rows
+                if (lowerMeal === 'sides' || lowerCount.includes('totals from above')) {
+                    isSummarySection = true;
+                    return;
                 }
-                allItems.push({ name: matchedMeal, amount: 1, notes: specialNotes });
 
-                // Process Sides
+                if (!mealRaw || lowerMeal === 'meal' || lowerCount === 'count'
+                    || lowerMeal.includes('total') || lowerMeal.includes('holy shred')) return;
+
+                if (pickupTime && pickupTime.toLowerCase() !== 'pickup') pickupTimes.push(pickupTime);
+
+                // --- MAIN MEAL ---
+                let countMatch = countRaw.match(/(\d+)/);
+                if (countMatch) {
+                    let mainCount = parseInt(countMatch[1]);
+                    let matchedMeal = mealRaw;
+                    for (const m of menuItemsMap) {
+                        if (lowerMeal.includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && lowerMeal.includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                            matchedMeal = m.title; break;
+                        }
+                    }
+                    allItems.push({ name: matchedMeal, amount: mainCount, notes: specialNotes });
+                }
+
+                // --- SIDES ---
                 if (optionsRaw.toLowerCase().includes("add side:")) {
                     let sideRaw = optionsRaw.replace(/add side[:\s]*/i, '').trim();
                     let matchedSide = sideRaw;
