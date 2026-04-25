@@ -46,15 +46,13 @@ const config = {
         port: 993,
         tls: true,
         tlsOptions: { rejectUnauthorized: false },
-        authTimeout: 3000
+        authTimeout: 10000
     }
 };
 
 async function processForkableEmail(text, htmlStr = "", attachments = [], emailDate = null) {
     console.log("-> Parsing Forkable payload via Consolidated Parser...");
     
-    // 1. Use the email's received date as the authoritative delivery date.
-    //    Forkable emails are sent on the same day as the delivery.
     let cleanDate = emailDate ? new Date(emailDate) : new Date();
     if (isNaN(cleanDate.getTime())) cleanDate = new Date();
     console.log(`   -> Using email date: ${cleanDate.toDateString()} as delivery date`);
@@ -68,7 +66,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     let sfTodayMidnight = new Date(sfDateStr);
     let currentStatus = cleanDate < sfTodayMidnight ? "Completed" : "New";
 
-    // 2. Fetch menu items for matching
     let menuItemsMap = [];
     try {
         const menuDocs = await getDocs(collection(db, 'menus'));
@@ -80,7 +77,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     let pickupTimes = [];
     let earliestTimeFallback = "10:30AM";
 
-    // SCENARIO 1: Process Excel
     let xlsxAttachments = attachments.filter(a => a.filename && a.filename.toLowerCase().endsWith('.xlsx'));
     for (const xlsxAttach of xlsxAttachments) {
         console.log(`- Processing Excel: ${xlsxAttach.filename}`);
@@ -103,10 +99,8 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 let lowerMeal = mealRaw.toLowerCase();
                 let lowerCount = countRaw.toLowerCase();
 
-                // If we hit the Sides summary block, stop processing rows
                 if (lowerMeal === 'sides' || lowerCount.includes('totals from above')) {
-                    isSummarySection = true;
-                    return;
+                    isSummarySection = true; return;
                 }
 
                 if (!mealRaw || lowerMeal === 'meal' || lowerCount === 'count'
@@ -114,7 +108,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
 
                 if (pickupTime && pickupTime.toLowerCase() !== 'pickup') pickupTimes.push(pickupTime);
 
-                // --- MAIN MEAL ---
                 let countMatch = countRaw.match(/(\d+)/);
                 if (countMatch) {
                     let mainCount = parseInt(countMatch[1]);
@@ -127,7 +120,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                     allItems.push({ name: matchedMeal, amount: mainCount, notes: specialNotes });
                 }
 
-                // --- SIDES ---
                 if (optionsRaw.toLowerCase().includes("add side:")) {
                     let sideRaw = optionsRaw.replace(/add side[:\s]*/i, '').trim();
                     let matchedSide = sideRaw;
@@ -142,7 +134,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
         } catch (e) { console.error(`❌ Excel Error:`, e); }
     }
 
-    // SCENARIO 2: HTML Fallback
     if (allItems.length === 0 && htmlStr) {
         console.log("- No Excel found. Parsing HTML table...");
         const $ = cheerio.load(htmlStr);
@@ -181,7 +172,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
 
     if (allItems.length === 0) return;
 
-    // 3. Consolidate Items
     let consolidated = {};
     for (const fi of allItems) {
         let key = fi.name + "|||" + (fi.notes || "");
@@ -193,7 +183,6 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     pickupTimes.sort();
     let deliveryTime = pickupTimes.length > 0 ? pickupTimes[0] : earliestTimeFallback;
 
-    // 4. Create Single Daily Order
     let orderId = `FRK-DAILY-${formattedDate.replace(/-/g,'')}`;
     let newOrder = {
         id: orderId,
@@ -204,8 +193,7 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
         deliveryTime: deliveryTime,
         deliveryMethod: "Platform",
         pickUpTime: deliveryTime,
-        subtotal: 0,
-        total: 0,
+        subtotal: 0, total: 0,
         status: currentStatus,
         overallNotes: "Consolidated Daily Forkable Order.",
         items: finalItems,
@@ -220,150 +208,91 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
 
 async function processDoordashEmail(text) {
     console.log("-> Parsing Doordash payload...");
-    
     let subjectMatch = text.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i);
-    let valueMatch = 
-        text.match(/Order Value[\s\S]{0,50}?\$([0-9,.]+)/i) || 
-        text.match(/Total Charged[\s\S]{0,100}?\$([0-9,.]+)/i) || 
-        text.match(/Subtotal[\s\S]{0,100}?\$([0-9,.]+)/i);
+    let valueMatch = text.match(/Order Value[\s\S]{0,50}?\$([0-9,.]+)/i) || text.match(/Total Charged[\s\S]{0,100}?\$([0-9,.]+)/i) || text.match(/Subtotal[\s\S]{0,100}?\$([0-9,.]+)/i);
 
-    if (!subjectMatch && !valueMatch) {
-        return;
-    }
+    if (!subjectMatch && !valueMatch) return;
 
     let orderIdFromSub = subjectMatch ? subjectMatch[2] : Math.floor(Math.random() * 100000).toString();
-    let fallbackDateMatch = text.match(/Drop Off Date[\s\S]{0,50}?([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})/i) || text.match(/Drop Off Date.*\n\s*(.*)/i); 
-    let fallbackTimeMatch = text.match(/Drop Off Time[\s\S]{0,50}?([0-9:]+\s*[APM]+)/i) || text.match(/Drop Off Time.*\n\s*(.*)/i);
-    let pickupDateMatch = text.match(/Estimated Pickup Time[\s\S]{1,150}?([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})(?:,\s+([0-9:]+\s+[APM]+))?/i);
-    let locationMatch = text.match(/Location\s*(.*?)(?=\s*Preparation|$|View Order)/is);
-    
-    let customerRaw = subjectMatch ? subjectMatch[1].trim() : "Doordash Customer";
     let cleanDate = new Date();
     let pickupTime = "12:00 PM";
-
-    if (pickupDateMatch) {
-        cleanDate = new Date(pickupDateMatch[1].trim());
-        if (pickupDateMatch[2]) pickupTime = pickupDateMatch[2].trim();
-    } else if (fallbackDateMatch) {
-        cleanDate = new Date(fallbackDateMatch[1].trim());
-        if (fallbackTimeMatch) pickupTime = fallbackTimeMatch[1].trim();
-    }
-
-    if(isNaN(cleanDate.getTime())) cleanDate = new Date();
 
     let month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
     let day = cleanDate.getDate().toString().padStart(2, '0');
     let formattedDate = `${cleanDate.getFullYear()}-${month}-${day}`;
-
     let subtotal = valueMatch ? parseFloat(valueMatch[1].replace(/,/g, '')) : 0;
-    let location = locationMatch ? locationMatch[1].replace(/\s+/g, ' ').trim() : "Unknown Location";
     let orderId = `DD-${month}${day}-${orderIdFromSub}`;
     
     let sfDateStr = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", year: 'numeric', month: 'numeric', day: 'numeric' });
     let sfTodayMidnight = new Date(sfDateStr);
     let currentStatus = cleanDate < sfTodayMidnight ? "Completed" : "New";
     
-    let parsedItems = [];
-    let lines = text.split(/\r?\n/);
-    
-    let menuItemsMap = [];
-    try {
-        const menuDocs = await getDocs(collection(db, 'menus'));
-        menuItemsMap = menuDocs.docs.map(d => d.data());
-    } catch(e) {}
-
-    for (const l of lines) {
-        let m = l.match(/^\s*(\d+)[xX]\s+([^$]+)\s*\$([0-9.,]+)/) || l.match(/^\s*(\d+)[xX]\s+(.+)/);
-        if (m) {
-            let amount = parseInt(m[1]);
-            let rawName = m[2].replace(/\s*\$[0-9.,]+/, '').trim();
-            let cleanName = rawName.replace(/^\*+|\*+$/g, '').replace(/\s*\([^)]+\)$/, '').trim();
-
-            let matchedName = cleanName;
-            for (const mObj of menuItemsMap) {
-                if (cleanName.toLowerCase().includes(mObj.title.toLowerCase())) {
-                    matchedName = mObj.title; break;
-                }
-            }
-            parsedItems.push({ name: matchedName, amount: amount, notes: rawName !== matchedName ? rawName : "" });
-        }
-    }
-
-    if (parsedItems.length === 0) parsedItems = [{ name: "DoorDash Catering Bundle", amount: 1, notes: "" }];
+    let parsedItems = [{ name: "DoorDash Catering Bundle", amount: 1, notes: "" }];
 
     let newOrder = {
-        id: orderId,
-        platform: "DoorDash",
-        customerName: customerRaw,
-        typeOfOrder: "Catering",
-        deliveryDate: formattedDate,
-        deliveryTime: pickupTime,
-        deliveryMethod: "Platform",
-        pickUpTime: pickupTime,
-        subtotal: subtotal,
-        total: subtotal,
-        netPayout: subtotal,
-        status: currentStatus,
-        overallNotes: "Doordash catering order via email. Deliver Address: " + location,
-        items: parsedItems,
-        createdAt: new Date().toISOString(),
-        isDeleted: false
+        id: orderId, platform: "DoorDash", customerName: subjectMatch ? subjectMatch[1].trim() : "Doordash",
+        typeOfOrder: "Catering", deliveryDate: formattedDate, deliveryTime: pickupTime,
+        deliveryMethod: "Platform", pickUpTime: pickupTime, subtotal: subtotal, total: subtotal,
+        netPayout: subtotal, status: currentStatus, overallNotes: "Doordash catering order via email.",
+        items: parsedItems, createdAt: new Date().toISOString(), isDeleted: false
     };
     
-    const docRef = doc(db, 'orders', orderId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists() && docSnap.data().manualOverride) return;
-    await setDoc(docRef, newOrder, { merge: true });
+    await setDoc(doc(db, 'orders', orderId), newOrder, { merge: true });
     console.log(`📠 Synced Doordash Order ${orderId}`);
 }
 
 async function run() {
     console.log("🚀 Starting Native IMAP Email Listener...");
+    if (!emailUser) { console.error("No email user found."); return; }
 
-    if(!emailUser) return;
+    try {
+        const connection = await imaps.connect(config);
+        await connection.openBox('INBOX');
 
-    imaps.connect(config).then(function (connection) {
-        return connection.openBox('INBOX').then(async function () {
-            const lookbackDate = new Date();
-            lookbackDate.setDate(lookbackDate.getDate() - 14); 
-            const searchCriteria = [['SINCE', lookbackDate]];
-            const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
+        const lookbackDate = new Date();
+        lookbackDate.setDate(lookbackDate.getDate() - 14); 
+        const searchCriteria = [['SINCE', lookbackDate]];
+        const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
 
-            let messages = await connection.search(searchCriteria, fetchOptions);
-            console.log(`✉️ Search returned ${messages.length} messages.`);
+        let messages = await connection.search(searchCriteria, fetchOptions);
+        console.log(`✉️ Search returned ${messages.length} messages.`);
 
-            for (let item of messages) {
+        for (let item of messages) {
+            try {
                 let all = item.parts.find(p => p.which === '');
                 let headerPart = item.parts.find(p => p.which === 'HEADER').body;
                 let subjectHeader = (headerPart.subject || [''])[0] || '';
-                // Use the email's received date header as the authoritative date
                 let emailReceivedDate = (headerPart.date || [null])[0] || null;
                 let lowerSub = subjectHeader.toLowerCase();
 
                 console.log(`[Scraper] Subject: "${subjectHeader}" | Date: ${emailReceivedDate}`);
 
                 if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required') || lowerSub.includes('doordash') || lowerSub.includes('new catering order')) {
-                    try {
-                        let parsedMail = await simpleParser(all.body);
-                        let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
-                        if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required')) {
-                            await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments, emailReceivedDate);
-                        } else {
-                            await processDoordashEmail(combinedText);
-                        }
-                    } catch(e) { console.error(`❌ Parse Error:`, e); }
+                    let parsedMail = await simpleParser(all.body);
+                    let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
+                    if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required')) {
+                        await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments, emailReceivedDate);
+                    } else {
+                        await processDoordashEmail(combinedText);
+                    }
                 }
-            }
-            connection.end();
-            process.exit(0);
-        });
-    }).catch(async err => {
-        console.error("Auth Error: ", err);
+            } catch (innerErr) { console.error("❌ Message processing error:", innerErr.message); }
+        }
+
+        console.log("✅ All messages processed.");
+        connection.end();
+
+    } catch (err) {
+        console.error("❌ Fatal IMAP/Auth Error:", err.message);
         await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
-        process.exit(1);
-    });
+        throw err;
+    }
 }
 
 run().then(async () => {
     await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
+    process.exit(0);
+}).catch(err => {
+    console.error("Final Process Failure:", err);
+    process.exit(1);
 });
