@@ -100,62 +100,80 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
             const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-            let isSummarySection = false;
-
-            let skipMealCountFor = null;
+            let mainBlocks = [];
+            let activeBlock = null;
+            let summarySides = [];
+            let inSidesSection = false;
 
             data.forEach((row, idx) => {
-                if (!row || idx < 1 || isSummarySection) return;
-                let countRaw = String(row[0] || "").trim();
-                let mealRaw = String(row[1] || "").trim();
-                let optionsRaw = String(row[2] || "").trim();
-                let pickupTime = String(row[6] || "").trim();
+                if (!row || idx < 1) return;
+                let colA = String(row[0] || "").trim();
+                let colB = String(row[1] || "").trim();
+                let colD = String(row[3] || "").trim();
+                let colG = String(row[6] || "").trim();
 
-                if (mealRaw.toLowerCase().includes('sides') || countRaw.toLowerCase().includes('totals from above')) {
-                    isSummarySection = true; return;
-                }
-                if (!mealRaw || mealRaw.toLowerCase() === 'meal' || countRaw.toLowerCase() === 'count') {
-                    skipMealCountFor = null;
+                if (colA.toLowerCase().includes("(totals from above)")) {
+                    inSidesSection = true; 
                     return;
                 }
 
-                if (pickupTime && pickupTime.toLowerCase() !== 'pickup') pickupTimes.push(pickupTime);
-
-                let countMatch = countRaw.match(/(\d+)/);
-                if (countMatch) {
-                    // This row defines a group total (e.g., 6x)
-                    let mainCount = parseInt(countMatch[1]);
-                    let matchedMeal = mealRaw;
-                    for (const m of menuItemsMap) {
-                        if (mealRaw.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && mealRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                            matchedMeal = m.title; break;
-                        }
+                if (!inSidesSection) {
+                    // --- MEAL BLOCK LOGIC ---
+                    let countMatch = colA.match(/(\d+)/);
+                    if (countMatch) {
+                        activeBlock = {
+                            meal: colB,
+                            groupTotal: parseInt(countMatch[1]),
+                            rows: [],
+                            pickupTime: colG
+                        };
+                        mainBlocks.push(activeBlock);
                     }
-                    allItems.push({ name: matchedMeal, amount: mainCount, notes: String(row[3] || "").trim() });
-                    skipMealCountFor = mealRaw; // Skip subsequent rows for this meal group
+                    if (activeBlock) {
+                        activeBlock.rows.push({ note: colD, time: colG });
+                    }
                 } else {
-                    // No count in Col A. If this is a new meal, it's a single order (1x)
-                    if (mealRaw !== skipMealCountFor) {
-                        let matchedMeal = mealRaw;
-                        for (const m of menuItemsMap) {
-                            if (mealRaw.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && mealRaw.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                                matchedMeal = m.title; break;
-                            }
-                        }
-                        allItems.push({ name: matchedMeal, amount: 1, notes: String(row[3] || "").trim() });
-                        // We don't set skipMealCountFor here because individual rows might follow each other
+                    // --- SIDES SUMMARY LOGIC ---
+                    let countMatch = colA.match(/(\d+)/);
+                    if (countMatch && colB) {
+                        summarySides.push({ name: colB, amount: parseInt(countMatch[1]) });
                     }
                 }
+            });
 
-                // ALWAYS count sides from Column C
-                if (optionsRaw.toLowerCase().includes("add side:")) {
-                    let sideRaw = optionsRaw.replace(/add side[:\s]*/i, '').trim();
-                    let matchedSide = sideRaw;
-                    for (const m of menuItemsMap) {
-                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
-                    }
-                    allItems.push({ name: matchedSide, amount: 1, notes: "" });
+            mainBlocks.forEach(block => {
+                if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
+                    pickupTimes.push(block.pickupTime);
                 }
+                let noteGroups = {};
+                let totalRowsWithNotes = 0;
+                block.rows.forEach(r => {
+                    if (r.note && r.note.length > 1) {
+                        noteGroups[r.note] = (noteGroups[r.note] || 0) + 1;
+                        totalRowsWithNotes++;
+                    }
+                });
+                let baseCount = block.groupTotal - totalRowsWithNotes;
+                let matchedMeal = block.meal;
+                for (const m of menuItemsMap) {
+                    if (block.meal.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && block.meal.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                        matchedMeal = m.title; break;
+                    }
+                }
+                if (baseCount > 0) allItems.push({ name: matchedMeal, amount: baseCount, notes: "" });
+                for (const noteText in noteGroups) {
+                    allItems.push({ name: matchedMeal, amount: noteGroups[noteText], notes: noteText });
+                }
+            });
+
+            summarySides.forEach(side => {
+                let matchedSide = side.name;
+                for (const m of menuItemsMap) {
+                    if (side.name.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && side.name.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
+                        matchedSide = m.title; break;
+                    }
+                }
+                allItems.push({ name: matchedSide, amount: side.amount, notes: "" });
             });
         } catch (e) {
             console.error(`❌ Excel Error:`, e);
