@@ -1,31 +1,25 @@
-
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs } from "firebase/firestore";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+import fs from 'fs';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCj__TCfYSF-1y4uR-UOId_aPWWwy4-W5A",
   authDomain: "hscaterhub.firebaseapp.com",
-  projectId: "hscaterhub",
-  storageBucket: "hscaterhub.firebasestorage.app",
-  messagingSenderId: "191852835453",
-  appId: "1:191852835453:web:6e8498beaecbb85f637714"
+  projectId: "hscaterhub"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-async function check() {
-    console.log("Listing ALL Forkable orders in DB...");
-    const snap = await getDocs(collection(db, "orders"));
-    let count = 0;
-    snap.forEach(doc => {
-        const d = doc.data();
-        if (d.platform === "Forkable") {
-            console.log(`- ${doc.id}: ${d.customerName} [${d.deliveryDate}] STATUS: ${d.status}`);
-            count++;
-        }
-    });
-    console.log(`Done. Total Forkable orders: ${count}`);
-    process.exit(0);
+const d = await getDoc(doc(db, 'orders', 'FRK-DAILY-20260422'));
+if (d.exists()) {
+    const items = d.data().items;
+    let out = `Total unique items: ${items.length}\n`;
+    items.forEach(i => { out += `  ${i.amount}x ${i.name}${i.notes ? ' | Note: ' + i.notes : ''}\n`; });
+    fs.writeFileSync('debug_out.txt', out);
+    process.stdout.write(out);
+} else {
+    fs.writeFileSync('debug_out.txt', 'NOT FOUND');
+    console.log('NOT FOUND');
 }
-check();
+process.exit(0);

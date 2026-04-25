@@ -50,22 +50,14 @@ const config = {
     }
 };
 
-async function processForkableEmail(text, htmlStr = "", attachments = []) {
+async function processForkableEmail(text, htmlStr = "", attachments = [], emailDate = null) {
     console.log("-> Parsing Forkable payload via Consolidated Parser...");
     
-    // 1. Get the delivery date
-    let dateMatch = text.match(/DATE\[?\n\s*\]?\s*(.+?202\d|.+?(?=LOCATION|\n\n))/i) || 
-                    text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ a-z]*\s+\d{1,2}(?:\s*,\s*202\d)?/i) ||
-                    text.match(/Forkable Pickup(?: Date)?\s+([A-Za-z]+ \d{1,2}, \d{4})/i) ||
-                    text.match(/Forkable Pickup\s+(?:[A-Za-z]+,\s*)?([A-Za-z]+\s+\d{1,2})/i);
-    
-    let rawDateStr = dateMatch ? (dateMatch[1] || dateMatch[0]) : new Date().toDateString();
-    let cleanDate = new Date(rawDateStr);
-    
-    // Fix year 2001 default
-    if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0 || cleanDate.getFullYear() === 2001) && rawDateStr) {
-        cleanDate = new Date(`${rawDateStr.replace(/^[A-Za-z]+,\s*/, '')} ${new Date().getFullYear()}`);
-    }
+    // 1. Use the email's received date as the authoritative delivery date.
+    //    Forkable emails are sent on the same day as the delivery.
+    let cleanDate = emailDate ? new Date(emailDate) : new Date();
+    if (isNaN(cleanDate.getTime())) cleanDate = new Date();
+    console.log(`   -> Using email date: ${cleanDate.toDateString()} as delivery date`);
     
     const year = cleanDate.getFullYear();
     const month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
@@ -322,15 +314,20 @@ async function run() {
 
             for (let item of messages) {
                 let all = item.parts.find(p => p.which === '');
-                let subjectHeader = (item.parts.find(p => p.which === 'HEADER').body.subject || [''])[0] || '';
+                let headerPart = item.parts.find(p => p.which === 'HEADER').body;
+                let subjectHeader = (headerPart.subject || [''])[0] || '';
+                // Use the email's received date header as the authoritative date
+                let emailReceivedDate = (headerPart.date || [null])[0] || null;
                 let lowerSub = subjectHeader.toLowerCase();
+
+                console.log(`[Scraper] Subject: "${subjectHeader}" | Date: ${emailReceivedDate}`);
 
                 if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required') || lowerSub.includes('doordash') || lowerSub.includes('new catering order')) {
                     try {
                         let parsedMail = await simpleParser(all.body);
                         let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
                         if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required')) {
-                            await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments);
+                            await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments, emailReceivedDate);
                         } else {
                             await processDoordashEmail(combinedText);
                         }

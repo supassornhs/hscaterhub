@@ -455,9 +455,9 @@ function openOrderDetails(order) {
       <div class="info-group"><label>Delivery Date</label><p>${order.deliveryDate}</p></div>
       <div class="info-group"><label>Delivery Method</label><p>${methodType}</p></div>
       <div class="info-group"><label>${timeLabel}</label><p style="color: #6ee7b7;">${timeValue}</p></div>
-      <div class="info-group"><label>Subtotal</label><p>$${order.subtotal.toFixed(2)}</p></div>
-      <div class="info-group"><label>Total</label><p>$${order.total.toFixed(2)}</p></div>
-      <div class="info-group"><label>Net Payout</label><p>$${order.netPayout.toFixed(2)}</p></div>
+      <div class="info-group"><label>Subtotal</label><p>$${(parseFloat(order.subtotal) || 0).toFixed(2)}</p></div>
+      <div class="info-group"><label>Total</label><p>$${(parseFloat(order.total) || 0).toFixed(2)}</p></div>
+      <div class="info-group"><label>Net Payout</label><p>$${(parseFloat(order.netPayout) || 0).toFixed(2)}</p></div>
     </div>
     
     <h3>Items in Order</h3>
