@@ -126,6 +126,7 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                     // --- MEAL BLOCK LOGIC ---
                     let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
                     if (countMatch && !lowerA.includes("totals")) {
+                        // START OF A NEW MEAL BLOCK
                         activeBlock = {
                             meal: colB,
                             groupTotal: parseInt(countMatch[1]),
@@ -135,6 +136,7 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                         mainBlocks.push(activeBlock);
                     }
                     if (activeBlock) {
+                        // We add this row's note to the current block
                         activeBlock.rows.push({ note: colD, time: colG });
                     }
                 } else {
@@ -152,35 +154,56 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
                     pickupTimes.push(block.pickupTime);
                 }
+                
                 let noteGroups = {};
                 let totalRowsWithNotes = 0;
                 block.rows.forEach(r => {
-                    if (r.note && r.note.length > 1) {
-                        noteGroups[r.note] = (noteGroups[r.note] || 0) + 1;
+                    if (r.note && r.note.trim().length > 1) {
+                        let cleanNote = r.note.trim();
+                        noteGroups[cleanNote] = (noteGroups[cleanNote] || 0) + 1;
                         totalRowsWithNotes++;
                     }
                 });
+
                 let baseCount = block.groupTotal - totalRowsWithNotes;
-                let matchedMeal = block.meal;
+                
+                // --- SMART MATCHING ---
+                // We use the raw name from Col B, but try to find the OFFICIAL menu item for ID/Images
+                let officialName = block.meal;
                 for (const m of menuItemsMap) {
-                    if (block.meal.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && block.meal.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                        matchedMeal = m.title; break;
+                    let titleLower = m.title.toLowerCase();
+                    let bLower = block.meal.toLowerCase();
+                    let alias = (m.platformOverrides?.Forkable?.alias || "").toLowerCase();
+                    
+                    // Only match if the title is an EXACT match or a very high-confidence keyword match
+                    if (bLower === titleLower || (alias && bLower === alias) || bLower.includes(titleLower)) {
+                        officialName = m.title;
+                        break;
                     }
                 }
-                if (baseCount > 0) allItems.push({ name: matchedMeal, amount: baseCount, notes: "" });
+
+                // Push base version (no notes)
+                if (baseCount > 0) {
+                    allItems.push({ name: officialName, amount: baseCount, notes: "" });
+                }
+
+                // Push versions with notes
                 for (const noteText in noteGroups) {
-                    allItems.push({ name: matchedMeal, amount: noteGroups[noteText], notes: noteText });
+                    allItems.push({ name: officialName, amount: noteGroups[noteText], notes: noteText });
                 }
             });
 
+            // Add the summarized sides
             summarySides.forEach(side => {
-                let matchedSide = side.name;
+                let officialSide = side.name;
                 for (const m of menuItemsMap) {
-                    if (side.name.toLowerCase().includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && side.name.toLowerCase().includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                        matchedSide = m.title; break;
+                    let sLower = side.name.toLowerCase();
+                    let tLower = m.title.toLowerCase();
+                    if (sLower === tLower || sLower.includes(tLower)) {
+                        officialSide = m.title; break;
                     }
                 }
-                allItems.push({ name: matchedSide, amount: side.amount, notes: "" });
+                allItems.push({ name: officialSide, amount: side.amount, notes: "" });
             });
         } catch (e) {
             console.error(`❌ Excel Error:`, e);
