@@ -21,7 +21,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// First fetch auth dynamically from Firebase dashboard if configured
+// Fetch auth dynamically from Firebase
 const crawlerDoc = await getDoc(doc(db, 'system', 'crawlers'));
 const emailStr = crawlerDoc.exists() ? crawlerDoc.data()['Email Source']?.cookie : null;
 
@@ -53,7 +53,7 @@ const config = {
 async function processForkableEmail(text, htmlStr = "", attachments = []) {
     console.log("-> Parsing Forkable payload via Consolidated Parser...");
     
-    // 1. Get the general date
+    // 1. Get the delivery date
     let dateMatch = text.match(/DATE\[?\n\s*\]?\s*(.+?202\d|.+?(?=LOCATION|\n\n))/i) || 
                     text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ a-z]*\s+\d{1,2}(?:\s*,\s*202\d)?/i) ||
                     text.match(/Forkable Pickup(?: Date)?\s+([A-Za-z]+ \d{1,2}, \d{4})/i) ||
@@ -62,7 +62,7 @@ async function processForkableEmail(text, htmlStr = "", attachments = []) {
     let rawDateStr = dateMatch ? (dateMatch[1] || dateMatch[0]) : new Date().toDateString();
     let cleanDate = new Date(rawDateStr);
     
-    // Fix: If year is omitted, JS defaults to year 2001. We need to enforce current year.
+    // Fix year 2001 default
     if((isNaN(cleanDate.getTime()) || cleanDate.getTime() === 0 || cleanDate.getFullYear() === 2001) && rawDateStr) {
         cleanDate = new Date(`${rawDateStr.replace(/^[A-Za-z]+,\s*/, '')} ${new Date().getFullYear()}`);
     }
@@ -88,10 +88,10 @@ async function processForkableEmail(text, htmlStr = "", attachments = []) {
     let pickupTimes = [];
     let earliestTimeFallback = "10:30AM";
 
-    // SCENARIO 1: Process Excel Attachment
+    // SCENARIO 1: Process Excel
     let xlsxAttachments = attachments.filter(a => a.filename && a.filename.toLowerCase().endsWith('.xlsx'));
     for (const xlsxAttach of xlsxAttachments) {
-        console.log(`- Processing Excel: ${xlsxAttach.filename}...`);
+        console.log(`- Processing Excel: ${xlsxAttach.filename}`);
         try {
             const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -127,20 +127,20 @@ async function processForkableEmail(text, htmlStr = "", attachments = []) {
                     allItems.push({ name: matchedSide, amount: 1, notes: "" });
                 }
             });
-        } catch (e) { console.error(`❌ Excel Parsing Error:`, e); }
+        } catch (e) { console.error(`❌ Excel Error:`, e); }
     }
 
-    // SCENARIO 2: HTML Fallback (If no items from Excel)
+    // SCENARIO 2: HTML Fallback
     if (allItems.length === 0 && htmlStr) {
-        console.log("- No Excel items found. Parsing HTML table...");
+        console.log("- No Excel found. Parsing HTML table...");
         const $ = cheerio.load(htmlStr);
         $('table tr').each((i, row) => {
             const cells = $(row).children('td, th');
-            if (cells.length >= 4) {
+            if (cells.length >= 3) {
                 let mealTxt = $(cells[1]).text().trim();
                 if (mealTxt && mealTxt.toLowerCase() !== 'meal' && !mealTxt.toLowerCase().includes('total')) {
-                    let notes = $(cells[3]).text().trim();
-                    let pickupTime = $(cells[6] || "").text().trim();
+                    let notes = (cells.length >= 4) ? $(cells[3]).text().trim() : "";
+                    let pickupTime = (cells.length >= 7) ? $(cells[6]).text().trim() : "";
                     if (pickupTime) pickupTimes.push(pickupTime);
 
                     let matchedMeal = mealTxt;
@@ -197,7 +197,8 @@ async function processForkableEmail(text, htmlStr = "", attachments = []) {
         status: currentStatus,
         overallNotes: "Consolidated Daily Forkable Order.",
         items: finalItems,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        isDeleted: false
     };
 
     const docRef = doc(db, 'orders', orderId);
@@ -215,42 +216,35 @@ async function processDoordashEmail(text) {
         text.match(/Subtotal[\s\S]{0,100}?\$([0-9,.]+)/i);
 
     if (!subjectMatch && !valueMatch) {
-        console.log("❌ Bypass generic Doordash email (Not a catering order payload).");
         return;
     }
 
     let orderIdFromSub = subjectMatch ? subjectMatch[2] : Math.floor(Math.random() * 100000).toString();
-
     let fallbackDateMatch = text.match(/Drop Off Date[\s\S]{0,50}?([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})/i) || text.match(/Drop Off Date.*\n\s*(.*)/i); 
     let fallbackTimeMatch = text.match(/Drop Off Time[\s\S]{0,50}?([0-9:]+\s*[APM]+)/i) || text.match(/Drop Off Time.*\n\s*(.*)/i);
-    
     let pickupDateMatch = text.match(/Estimated Pickup Time[\s\S]{1,150}?([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})(?:,\s+([0-9:]+\s+[APM]+))?/i);
     let locationMatch = text.match(/Location\s*(.*?)(?=\s*Preparation|$|View Order)/is);
     
     let customerRaw = subjectMatch ? subjectMatch[1].trim() : "Doordash Customer";
-
-    let rawDate = new Date().toDateString();
+    let cleanDate = new Date();
     let pickupTime = "12:00 PM";
 
     if (pickupDateMatch) {
-        rawDate = pickupDateMatch[1].trim();
+        cleanDate = new Date(pickupDateMatch[1].trim());
         if (pickupDateMatch[2]) pickupTime = pickupDateMatch[2].trim();
     } else if (fallbackDateMatch) {
-        rawDate = fallbackDateMatch[1].trim();
+        cleanDate = new Date(fallbackDateMatch[1].trim());
         if (fallbackTimeMatch) pickupTime = fallbackTimeMatch[1].trim();
     }
 
-    let cleanDate = new Date(rawDate);
     if(isNaN(cleanDate.getTime())) cleanDate = new Date();
 
-    let year = cleanDate.getFullYear().toString();
     let month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
     let day = cleanDate.getDate().toString().padStart(2, '0');
-    let formattedDate = `${year}-${month}-${day}`;
+    let formattedDate = `${cleanDate.getFullYear()}-${month}-${day}`;
 
     let subtotal = valueMatch ? parseFloat(valueMatch[1].replace(/,/g, '')) : 0;
     let location = locationMatch ? locationMatch[1].replace(/\s+/g, ' ').trim() : "Unknown Location";
-
     let orderId = `DD-${month}${day}-${orderIdFromSub}`;
     
     let sfDateStr = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles", year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -264,50 +258,26 @@ async function processDoordashEmail(text) {
     try {
         const menuDocs = await getDocs(collection(db, 'menus'));
         menuItemsMap = menuDocs.docs.map(d => d.data());
-        menuItemsMap.sort((a,b) => b.title.length - a.title.length);
-    } catch(e) {
-        console.log("Menu match fallback for DoorDash.");
-    }
+    } catch(e) {}
 
     for (const l of lines) {
-        let m = l.match(/^\s*(\d+)[xX]\s+([^$]+)\s*\$([0-9.,]+)/);
-        if (!m) m = l.match(/^\s*(\d+)[xX]\s+(.+)/);
-        
+        let m = l.match(/^\s*(\d+)[xX]\s+([^$]+)\s*\$([0-9.,]+)/) || l.match(/^\s*(\d+)[xX]\s+(.+)/);
         if (m) {
             let amount = parseInt(m[1]);
             let rawName = m[2].replace(/\s*\$[0-9.,]+/, '').trim();
-            
-            let cleanName = rawName.replace(/^\*+/, '').replace(/\*+$/, '').trim();
-            cleanName = cleanName.replace(/\s*\([^)]+\)$/, '').trim();
-            if (cleanName.endsWith('(Add-ons)')) cleanName = cleanName.replace(/\(Add-ons\)/, '').trim();
-            cleanName = cleanName.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+            let cleanName = rawName.replace(/^\*+|\*+$/g, '').replace(/\s*\([^)]+\)$/, '').trim();
 
             let matchedName = cleanName;
             for (const mObj of menuItemsMap) {
-                let match = cleanName.toLowerCase().includes(mObj.title.toLowerCase());
-                if (!match && mObj.platformOverrides && mObj.platformOverrides['DoorDash'] && mObj.platformOverrides['DoorDash'].alias) {
-                    match = cleanName.toLowerCase().includes(mObj.platformOverrides['DoorDash'].alias.toLowerCase());
-                }
-                if (!match && mObj.aliases) {
-                    match = mObj.aliases.some(a => cleanName.toLowerCase().includes(a.toLowerCase()));
-                }
-                if (match) {
-                    matchedName = mObj.title;
-                    break;
+                if (cleanName.toLowerCase().includes(mObj.title.toLowerCase())) {
+                    matchedName = mObj.title; break;
                 }
             }
-
-            parsedItems.push({ 
-                name: matchedName, 
-                amount: amount, 
-                notes: rawName !== matchedName ? rawName : "" 
-            });
+            parsedItems.push({ name: matchedName, amount: amount, notes: rawName !== matchedName ? rawName : "" });
         }
     }
 
-    if (parsedItems.length === 0) {
-        parsedItems = [{ name: "DoorDash Catering Bundle", amount: 1, notes: "" }];
-    }
+    if (parsedItems.length === 0) parsedItems = [{ name: "DoorDash Catering Bundle", amount: 1, notes: "" }];
 
     let newOrder = {
         id: orderId,
@@ -324,79 +294,55 @@ async function processDoordashEmail(text) {
         status: currentStatus,
         overallNotes: "Doordash catering order via email. Deliver Address: " + location,
         items: parsedItems,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        isDeleted: false
     };
     
-    const docRef = doc(db, 'orders', newOrder.id);
+    const docRef = doc(db, 'orders', orderId);
     const docSnap = await getDoc(docRef);
-    if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) {
-        console.log(`[DoorDash] Skipped (Manual Override): ${newOrder.id}`);
-        return;
-    }
+    if (docSnap.exists() && docSnap.data().manualOverride) return;
     await setDoc(docRef, newOrder, { merge: true });
-    console.log(`📠 Synced Doordash Order ${newOrder.id}`);
+    console.log(`📠 Synced Doordash Order ${orderId}`);
 }
 
 async function run() {
-    console.log("🚀 Starting Native IMAP Email Listener Component...");
+    console.log("🚀 Starting Native IMAP Email Listener...");
 
-    if(!emailUser) {
-        console.error("Missing EMAIL_USER or EMAIL_APP_PASSWORD! Run halted.");
-        await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
-        process.exit(1);
-    }
+    if(!emailUser) return;
 
     imaps.connect(config).then(function (connection) {
-        console.log("✅ IMAP Connected.");
         return connection.openBox('INBOX').then(async function () {
-            console.log("✅ INBOX Opened.");
             const lookbackDate = new Date();
-            lookbackDate.setDate(lookbackDate.getDate() - 2);
-            const searchCriteria = [
-                ['SINCE', lookbackDate],
-                ['OR', ['SUBJECT', 'Forkable Pickup'], ['OR', ['SUBJECT', 'Confirm Changes'], ['OR', ['SUBJECT', 'Action Required'], ['OR', ['SUBJECT', 'Doordash'], ['SUBJECT', 'New Catering Order']]]]]
-            ];
-            const fetchOptions = {
-                bodies: ['HEADER', 'TEXT', ''],
-                markSeen: false 
-            };
+            lookbackDate.setDate(lookbackDate.getDate() - 14); 
+            const searchCriteria = [['SINCE', lookbackDate]];
+            const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
 
-            console.log("📡 Scanning Inbox for delivery emails...");
-            try {
-                let messages = await connection.search(searchCriteria, fetchOptions);
-                console.log(`✉️ Search returned ${messages.length} messages.`);
+            let messages = await connection.search(searchCriteria, fetchOptions);
+            console.log(`✉️ Search returned ${messages.length} messages.`);
 
-                for (let item of messages) {
-                    let all = item.parts.find(p => p.which === '');
-                    let subjectHeader = (item.parts.find(p => p.which === 'HEADER').body.subject || [''])[0] || '';
-                    
-                    console.log(`[Email Scraper] Processing subject: "${subjectHeader}"`);
+            for (let item of messages) {
+                let all = item.parts.find(p => p.which === '');
+                let subjectHeader = (item.parts.find(p => p.which === 'HEADER').body.subject || [''])[0] || '';
+                let lowerSub = subjectHeader.toLowerCase();
+
+                if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required') || lowerSub.includes('doordash') || lowerSub.includes('new catering order')) {
                     try {
                         let parsedMail = await simpleParser(all.body);
-                        let bodyText = parsedMail.text || "";
-                        let combinedText = subjectHeader + "\n\n" + bodyText;
-                        if (subjectHeader.toLowerCase().includes('forkable') || subjectHeader.toLowerCase().includes('confirm changes') || subjectHeader.toLowerCase().includes('action required')) {
+                        let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
+                        if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required')) {
                             await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments);
-                        } else if (subjectHeader.toLowerCase().includes('doordash') || subjectHeader.toLowerCase().includes('new catering order')) {
+                        } else {
                             await processDoordashEmail(combinedText);
                         }
-                    } catch(e) {
-                         console.error(`❌ Failed to parse email:`, e);
-                    }
+                    } catch(e) { console.error(`❌ Parse Error:`, e); }
                 }
-                
-                connection.end();
-                process.exit(0);
-            } catch(e) {
-                console.error("Search Error: ", e);
-                connection.end();
-                process.exit(1);
             }
+            connection.end();
+            process.exit(0);
         });
     }).catch(async err => {
-        console.error("Authentication Error: ", err);
+        console.error("Auth Error: ", err);
         await setDoc(doc(db, 'system', 'crawlers'), { 'Email Source': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
-        await sendAlertEmail(db, 'Email Source');
         process.exit(1);
     });
 }
