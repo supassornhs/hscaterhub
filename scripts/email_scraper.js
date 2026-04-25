@@ -104,6 +104,7 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
             let activeBlock = null;
             let summarySides = [];
             let inSidesSection = false;
+            let rawLines = [];
 
             data.forEach((row, idx) => {
                 if (!row || idx < 1) return;
@@ -112,15 +113,19 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 let colD = String(row[3] || "").trim();
                 let colG = String(row[6] || "").trim();
 
-                if (colA.toLowerCase().includes("(totals from above)")) {
+                if (idx < 50) rawLines.push(`Row ${idx}: A=[${colA}] B=[${colB}] D=[${colD}]`);
+
+                // Detect the Start of the Sides Summary Section
+                let lowerA = colA.toLowerCase();
+                if (lowerA.includes("totals from above") || lowerA.includes("(totals from")) {
                     inSidesSection = true; 
                     return;
                 }
 
                 if (!inSidesSection) {
                     // --- MEAL BLOCK LOGIC ---
-                    let countMatch = colA.match(/(\d+)/);
-                    if (countMatch) {
+                    let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
+                    if (countMatch && !lowerA.includes("totals")) {
                         activeBlock = {
                             meal: colB,
                             groupTotal: parseInt(countMatch[1]),
@@ -135,11 +140,13 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 } else {
                     // --- SIDES SUMMARY LOGIC ---
                     let countMatch = colA.match(/(\d+)/);
-                    if (countMatch && colB) {
+                    if (countMatch && colB && !colB.toLowerCase().includes("sides")) {
                         summarySides.push({ name: colB, amount: parseInt(countMatch[1]) });
                     }
                 }
             });
+
+            await logScraperAction("Excel Diagnostic", { date: formattedDate, rawLines });
 
             mainBlocks.forEach(block => {
                 if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
