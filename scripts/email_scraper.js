@@ -98,8 +98,21 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     if (xlsxAttach) {
         try {
             const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            let data = [];
+            let sheetUsed = "";
+            for (const name of workbook.SheetNames) {
+                const sheet = workbook.Sheets[name];
+                data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                if (data.length > 5) {
+                    sheetUsed = name; break;
+                }
+            }
+            if (data.length === 0) {
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                sheetUsed = workbook.SheetNames[0];
+            }
+            console.log(`Using Excel Sheet: [${sheetUsed}] with ${data.length} rows.`);
             let mainBlocks = [];
             let activeBlock = null;
             let summarySides = [];
