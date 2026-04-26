@@ -105,12 +105,15 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
             let summarySides = [];
             let inSidesSection = false;
 
+            let rawLines = [];
             data.forEach((row, idx) => {
                 if (!row || idx < 1) return;
                 let colA = String(row[0] || "").trim();
                 let colB = String(row[1] || "").trim();
                 let colD = String(row[3] || "").trim();
                 let colG = String(row[6] || "").trim();
+
+                if (idx < 100) rawLines.push(`Row ${idx}: A=[${colA}] B=[${colB}] D=[${colD}]`);
 
                 // Detect the start of the summarized sides table at the bottom
                 let lowerA = colA.toLowerCase();
@@ -141,6 +144,8 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                     }
                 }
             });
+
+            await logScraperAction("Excel Diagnostic", { date: formattedDate, rawLines });
 
             mainBlocks.forEach(block => {
                 if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
