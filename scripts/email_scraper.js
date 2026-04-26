@@ -277,7 +277,7 @@ async function run() {
         const connection = await imaps.connect(config);
         await connection.openBox('INBOX');
         const lookbackDate = new Date();
-        lookbackDate.setDate(lookbackDate.getDate() - 14); 
+        lookbackDate.setDate(lookbackDate.getDate() - 30); 
         const searchCriteria = [['SINCE', lookbackDate]];
         const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
 
