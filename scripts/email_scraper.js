@@ -161,8 +161,17 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 
                 // Match to menu but KEEP THE NAME as primary
                 let finalName = block.meal;
+                const bLower = block.meal.toLowerCase();
                 for (const m of menuItemsMap) {
-                    if (block.meal.toLowerCase().includes(m.title.toLowerCase())) {
+                    const tLower = m.title.toLowerCase();
+                    // If the row specifically mentions 'Green Curry' but the menu item doesn't, skip it.
+                    // If the menu item is 'Green Curry' but the row doesn't mention it, skip it.
+                    const rowHasGreen = bLower.includes('green curry');
+                    const menuHasGreen = tLower.includes('green curry');
+                    
+                    if (rowHasGreen !== menuHasGreen) continue;
+
+                    if (bLower.includes(tLower)) {
                         finalName = m.title; break;
                     }
                 }
