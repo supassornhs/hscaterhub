@@ -992,10 +992,12 @@ platformDetailsContainer.addEventListener('input', (e) => {
 addMenuBtn.addEventListener('click', () => {
   addMenuForm.reset();
   delete addMenuForm.dataset.editingId;
-  if (typeof allergenTags !== 'undefined') {
-    allergenTags = [];
-    renderTags();
-  }
+  allergenTags = [];
+  toppingTags = [];
+  sauceTags = [];
+  baseTags = [];
+  proteinTags = [];
+  if (typeof renderAllTags === 'function') renderAllTags();
   if (platformDetailsContainer.children.length === 0) {
     initPlatformRows();
   }
