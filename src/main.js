@@ -1448,8 +1448,8 @@ document.getElementById('export-orders-btn')?.addEventListener('click', () => {
     return;
   }
 
-  // Generate CSV without item breakdowns
-  let csvContent = "Order ID,Platform,Customer Name,Delivery Date,Delivery Method,Time,Subtotal,Total,Net Payout,Status,Notes\n";
+  // Generate CSV with item breakdowns (Flat Database Format)
+  let csvContent = "Order ID,Platform,Customer Name,Delivery Date,Delivery Method,Time,Dish,Amount,Subtotal,Total,Net Payout,Status,Notes\n";
   
   filteredOrders.forEach(o => {
     const dynamicStatus = computeOrderStatus(o);
@@ -1472,21 +1472,26 @@ document.getElementById('export-orders-btn')?.addEventListener('click', () => {
     let displayTotal = typeof o.total === 'number' ? o.total.toFixed(2) : parseFloat(o.total || 0).toFixed(2);
     let displayNet = typeof o.netPayout === 'number' ? o.netPayout.toFixed(2) : parseFloat(o.netPayout || 0).toFixed(2);
 
-    let row = [
-        escapeCsv(o.id),
-        escapeCsv(plat),
-        escapeCsv(o.customerName),
-        escapeCsv(o.deliveryDate),
-        escapeCsv(methodType),
-        escapeCsv(methodTimeStr),
-        escapeCsv(displaySubtotal),
-        escapeCsv(displayTotal),
-        escapeCsv(displayNet),
-        escapeCsv(dynamicStatus),
-        escapeCsv(o.overallNotes)
-    ];
+    const itemsToExport = (o.items && o.items.length > 0) ? o.items : [{ name: "Total (No Items)", amount: 1 }];
 
-    csvContent += row.join(",") + "\n";
+    itemsToExport.forEach(itm => {
+        let row = [
+            escapeCsv(o.id),
+            escapeCsv(plat),
+            escapeCsv(o.customerName),
+            escapeCsv(o.deliveryDate),
+            escapeCsv(methodType),
+            escapeCsv(methodTimeStr),
+            escapeCsv(itm.name),
+            escapeCsv(itm.amount),
+            escapeCsv(displaySubtotal),
+            escapeCsv(displayTotal),
+            escapeCsv(displayNet),
+            escapeCsv(dynamicStatus),
+            escapeCsv(o.overallNotes)
+        ];
+        csvContent += row.join(",") + "\n";
+    });
   });
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
