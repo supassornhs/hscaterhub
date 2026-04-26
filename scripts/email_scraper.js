@@ -159,22 +159,25 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
 
                 let baseCount = block.groupTotal - totalRowsWithNotes;
                 
-                // Match to official menu title but fallback to raw name to ensure counts stay accurate
+                // Match to menu but KEEP THE NAME as primary
                 let finalName = block.meal;
-                let isSideItem = false;
                 for (const m of menuItemsMap) {
                     if (block.meal.toLowerCase().includes(m.title.toLowerCase())) {
                         finalName = m.title; break;
                     }
                 }
 
-                // --- REDUNDANCY CHECK ---
-                // If this item's name is already in the summary sides list, skip it here to avoid double-counting
-                if (summarySides.some(s => s.name.toLowerCase() === block.meal.toLowerCase() || s.name.toLowerCase() === finalName.toLowerCase())) {
-                    isSideItem = true;
+                // --- SMART REDUNDANCY CHECK ---
+                // We should only skip if the item is clearly a "Side/Add-on" being summarized.
+                // Main meals should ALWAYS be counted from the main blocks.
+                let isMainMeal = true;
+                const sideKeywords = ['spring roll', 'gyoza', 'white rice', 'brown rice', 'egg', 'kimchi', 'soup'];
+                if (sideKeywords.some(k => block.meal.toLowerCase().includes(k))) {
+                    isMainMeal = false;
                 }
 
-                if (!isSideItem) {
+                // If it's a main meal, or NOT in the summary, count it here.
+                if (isMainMeal || !summarySides.some(s => s.name.toLowerCase() === block.meal.toLowerCase())) {
                     if (baseCount > 0) allItems.push({ name: finalName, amount: baseCount, notes: "" });
                     for (const noteText in noteGroups) {
                         allItems.push({ name: finalName, amount: noteGroups[noteText], notes: noteText });
