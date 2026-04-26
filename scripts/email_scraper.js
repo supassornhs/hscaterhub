@@ -113,12 +113,27 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 sheetUsed = workbook.SheetNames[0];
             }
             console.log(`Using Excel Sheet: [${sheetUsed}] with ${data.length} rows.`);
+            // First Pass: Collect everything from the Summary Table (Totals from above)
+            let finalTotals = {}; 
+            let inSummary = false;
+
+            data.forEach((row, idx) => {
+                if (!row) return;
+                let colA = String(row[0] || "").trim();
+                let colB = String(row[1] || "").trim();
+                if (colA.toLowerCase().includes("totals from above")) { inSummary = true; return; }
+                if (inSummary) {
+                    let countMatch = colA.match(/(\d+)/);
+                    if (countMatch && colB && !colB.toLowerCase().includes("sides")) {
+                        finalTotals[colB] = (finalTotals[colB] || 0) + parseInt(countMatch[1]);
+                    }
+                }
+            });
+
+            // Second Pass: Scan Main Blocks for Notes, Pickup Times, and Grouping
             let mainBlocks = [];
             let activeBlock = null;
-            let summarySides = [];
-            let inSidesSection = false;
-
-            let rawLines = [];
+            let currentSummary = false;
             data.forEach((row, idx) => {
                 if (!row || idx < 1) return;
                 let colA = String(row[0] || "").trim();
@@ -126,103 +141,52 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 let colD = String(row[3] || "").trim();
                 let colG = String(row[6] || "").trim();
 
-                if (idx < 100) rawLines.push(`Row ${idx}: A=[${colA}] B=[${colB}] D=[${colD}]`);
+                if (colA.toLowerCase().includes("totals from above")) { currentSummary = true; return; }
+                if (currentSummary) return;
 
-                // Detect the start of the summarized sides table at the bottom
-                let lowerA = colA.toLowerCase();
-                if (lowerA.includes("totals from above") || lowerA.includes("(totals from")) {
-                    inSidesSection = true; return;
+                let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
+                if (countMatch && !colA.toLowerCase().includes("total")) {
+                    activeBlock = { meal: colB, rows: [], pickupTime: colG };
+                    mainBlocks.push(activeBlock);
                 }
-
-                if (!inSidesSection) {
-                    // --- MEAL BLOCK LOGIC ---
-                    let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
-                    if (countMatch && !lowerA.includes("total")) {
-                        activeBlock = {
-                            meal: colB,
-                            groupTotal: parseInt(countMatch[1]),
-                            rows: [],
-                            pickupTime: colG
-                        };
-                        mainBlocks.push(activeBlock);
-                    }
-                    if (activeBlock) {
-                        activeBlock.rows.push({ note: colD, time: colG });
-                    }
-                } else {
-                    // --- SIDES SUMMARY LOGIC (Bottom Table) ---
-                    let countMatch = colA.match(/(\d+)/);
-                    if (countMatch && colB && !colB.toLowerCase().includes("sides")) {
-                        summarySides.push({ name: colB, amount: parseInt(countMatch[1]) });
-                    }
-                }
+                if (activeBlock) activeBlock.rows.push({ note: colD, time: colG });
             });
 
-            await logScraperAction("Excel Diagnostic", { date: formattedDate, rawLines });
-
-            mainBlocks.forEach(block => {
-                if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
-                    pickupTimes.push(block.pickupTime);
+            // Third Pass: Reconcile Summary Totals with Notes/Times
+            for (let rawName in finalTotals) {
+                let total = finalTotals[rawName];
+                let matchedMenuTitle = rawName;
+                for (const m of menuItemsMap) {
+                    if (rawName.toLowerCase().includes(m.title.toLowerCase())) {
+                        matchedMenuTitle = m.title; break;
+                    }
                 }
-                
-                let noteGroups = {};
-                let totalRowsWithNotes = 0;
-                block.rows.forEach(r => {
-                    if (r.note && r.note.trim().length > 1) {
-                        let cleanNote = r.note.trim();
-                        noteGroups[cleanNote] = (noteGroups[cleanNote] || 0) + 1;
-                        totalRowsWithNotes++;
+
+                // Find rows in mainBlocks that match this item to get notes
+                let specificNotes = {};
+                let itemsWithNotesCount = 0;
+                mainBlocks.forEach(block => {
+                    if (block.meal.toLowerCase() === rawName.toLowerCase() || block.meal.toLowerCase().includes(matchedMenuTitle.toLowerCase())) {
+                        if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') pickupTimes.push(block.pickupTime);
+                        block.rows.forEach(r => {
+                            if (r.note && r.note.trim().length > 1) {
+                                let n = r.note.trim();
+                                specificNotes[n] = (specificNotes[n] || 0) + 1;
+                                itemsWithNotesCount++;
+                            }
+                        });
                     }
                 });
 
-                let baseCount = block.groupTotal - totalRowsWithNotes;
-                
-                // Match to menu but KEEP THE NAME as primary
-                let finalName = block.meal;
-                const bLower = block.meal.toLowerCase();
-                for (const m of menuItemsMap) {
-                    const tLower = m.title.toLowerCase();
-                    // If the row specifically mentions 'Green Curry' but the menu item doesn't, skip it.
-                    // If the menu item is 'Green Curry' but the row doesn't mention it, skip it.
-                    const rowHasGreen = bLower.includes('green curry');
-                    const menuHasGreen = tLower.includes('green curry');
-                    
-                    if (rowHasGreen !== menuHasGreen) continue;
-
-                    if (bLower.includes(tLower)) {
-                        finalName = m.title; break;
-                    }
+                let baseCount = total - itemsWithNotesCount;
+                if (baseCount > 0) allItems.push({ name: matchedMenuTitle, amount: baseCount, notes: "" });
+                for (let n in specificNotes) {
+                    allItems.push({ name: matchedMenuTitle, amount: specificNotes[n], notes: n });
                 }
-
-                // --- SMART REDUNDANCY CHECK ---
-                // We should only skip if the item is clearly a "Side/Add-on" being summarized.
-                // Main meals should ALWAYS be counted from the main blocks.
-                let isMainMeal = true;
-                const sideKeywords = ['spring roll', 'gyoza', 'white rice', 'brown rice', 'egg', 'kimchi', 'soup'];
-                if (sideKeywords.some(k => block.meal.toLowerCase().includes(k))) {
-                    isMainMeal = false;
-                }
-
-                // If it's a main meal, or NOT in the summary, count it here.
-                if (isMainMeal || !summarySides.some(s => s.name.toLowerCase() === block.meal.toLowerCase())) {
-                    if (baseCount > 0) allItems.push({ name: finalName, amount: baseCount, notes: "" });
-                    for (const noteText in noteGroups) {
-                        allItems.push({ name: finalName, amount: noteGroups[noteText], notes: noteText });
-                    }
-                }
-            });
-
-            summarySides.forEach(side => {
-                let finalSide = side.name;
-                for (const m of menuItemsMap) {
-                    if (side.name.toLowerCase().includes(m.title.toLowerCase())) {
-                        finalSide = m.title; break;
-                    }
-                }
-                allItems.push({ name: finalSide, amount: side.amount, notes: "" });
-            });
+            }
         } catch (e) {
             console.error(`❌ Excel Error:`, e);
+            await logScraperAction("Excel Error", { error: e.message, date: formattedDate });
         }
     }
 
