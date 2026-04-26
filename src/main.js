@@ -525,8 +525,8 @@ function openMenuDetails(menu) {
     <div style="margin-top: 1.5rem; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
       <h3 style="margin-top: 0; margin-bottom: 1rem;">Composition</h3>
       <div class="info-group" style="margin-bottom: 0.75rem;"><label>Ingredients</label><p>${menu.ingredient || 'None specified'}</p></div>
-      <div class="info-group" style="margin-bottom: 0.75rem;"><label>Toppings</label><p>${menu.toppings || 'None specified'}</p></div>
-      <div class="info-group" style="margin-bottom: 0.75rem;"><label>Sauces</label><p>${menu.sauce || 'None specified'}</p></div>
+      <div class="info-group" style="margin-bottom: 0.75rem;"><label>Toppings</label><p>${(Array.isArray(menu.toppings) ? menu.toppings.join(', ') : menu.toppings) || 'None specified'}</p></div>
+      <div class="info-group" style="margin-bottom: 0.75rem;"><label>Sauces</label><p>${(Array.isArray(menu.sauce) ? menu.sauce.join(', ') : menu.sauce) || 'None specified'}</p></div>
       <div class="info-group" style="margin-bottom: 0.75rem;"><label>Allergen List</label><p style="color: #ef4444; font-weight: 500;">${allergens}</p></div>
       <div class="info-group" style="margin-bottom: 0;"><label>Dietary Restrictions</label><p style="color: #10b981; font-weight: 500;">${diet}</p></div>
     </div>
@@ -567,7 +567,9 @@ function renderMenus(filter = 'all') {
     tr.classList.add('menu-row');
     
     const plats = item.platformOverrides ? Object.keys(item.platformOverrides).filter(k => item.platformOverrides[k].price || item.platformOverrides[k].note).join(', ') : '';
-    const basePro = [item.base, item.proteins].filter(Boolean).join(' + ');
+    const bases = Array.isArray(item.base) ? item.base.join(', ') : item.base;
+    const pros = Array.isArray(item.proteins) ? item.proteins.join(', ') : item.proteins;
+    const basePro = [bases, pros].filter(Boolean).join(' + ');
 
     const isDiet = (key) => item.dietary && item.dietary[key] ? '<span style="color: #10b981; font-weight: bold; font-size: 1.1rem;">&#10003;</span>' : '<span style="color: rgba(255,255,255,0.1);">-</span>';
 
@@ -702,19 +704,17 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
       document.getElementById('menu-desc').value = item.desc || '';
       document.getElementById('menu-price').value = item.standardPrice || '';
       document.getElementById('menu-ingredient').value = item.ingredient || '';
-      document.getElementById('menu-toppings').value = item.toppings || '';
-      document.getElementById('menu-sauce').value = item.sauce || '';
-      document.getElementById('menu-base').value = item.base || '';
-      document.getElementById('menu-proteins').value = item.proteins || '';
+      
+      toppingSystem.setTags(item.toppings);
+      sauceSystem.setTags(item.sauce);
+      baseSystem.setTags(item.base);
+      proteinSystem.setTags(item.proteins);
+      allergenSystem.setTags(item.allergens);
+
       document.getElementById('menu-serving').value = item.serving || '';
       document.getElementById('menu-weight-g').value = item.weightG || '';
       if (item.weightG) document.getElementById('menu-weight-g').dispatchEvent(new Event('input'));
       document.getElementById('menu-spicy').value = item.spicyLevel || '0';
-      
-      if (item.allergens && Array.isArray(item.allergens)) {
-        allergenTags = [...item.allergens];
-        renderTags();
-      }
       
       if (item.dietary) {
         document.getElementById('diet-vegan').checked = !!item.dietary.vegan;
@@ -1043,10 +1043,10 @@ addMenuForm.addEventListener('submit', async (e) => {
     category: document.getElementById('menu-category').value,
     standardPrice: document.getElementById('menu-price').value,
     ingredient: document.getElementById('menu-ingredient').value,
-    toppings: document.getElementById('menu-toppings').value,
-    sauce: document.getElementById('menu-sauce').value,
-    base: document.getElementById('menu-base').value,
-    proteins: document.getElementById('menu-proteins').value,
+    toppings: toppingTags,
+    sauce: sauceTags,
+    base: baseTags,
+    proteins: proteinTags,
     serving: document.getElementById('menu-serving').value,
     weightG: document.getElementById('menu-weight-g').value,
     spicyLevel: document.getElementById('menu-spicy').value,
@@ -1081,52 +1081,76 @@ addMenuForm.addEventListener('submit', async (e) => {
   
   addMenuForm.reset();
   platformDetailsContainer.innerHTML = '';
-  if (typeof allergenTags !== 'undefined') {
-    allergenTags = [];
-    renderTags();
-  }
+  allergenTags = [];
+  toppingTags = [];
+  sauceTags = [];
+  baseTags = [];
+  proteinTags = [];
+  renderAllTags();
   addMenuModal.classList.remove('active');
 });
 
 // Tags Input Logic
-const allergensInput = document.getElementById('menu-allergens-input');
-const tagsWrapper = document.getElementById('allergen-tags-wrapper');
-const allergensHidden = document.getElementById('menu-allergens');
 let allergenTags = [];
+let toppingTags = [];
+let sauceTags = [];
+let baseTags = [];
+let proteinTags = [];
 
-function renderTags() {
-  tagsWrapper.innerHTML = '';
-  allergenTags.forEach((tag, index) => {
-    const pill = document.createElement('span');
-    pill.className = 'tag-pill';
-    pill.innerHTML = `${tag} <span class="remove-tag" data-index="${index}">&times;</span>`;
-    tagsWrapper.appendChild(pill);
-  });
-  allergensHidden.value = allergenTags.join(',');
-  
-  tagsWrapper.querySelectorAll('.remove-tag').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const idx = e.target.getAttribute('data-index');
-      allergenTags.splice(idx, 1);
-      renderTags();
+function setupTagSystem(inputId, wrapperId, tagArray) {
+  const input = document.getElementById(inputId);
+  const wrapper = document.getElementById(wrapperId);
+  if (!input || !wrapper) return null;
+
+  const render = () => {
+    wrapper.innerHTML = '';
+    tagArray.forEach((tag, index) => {
+      const pill = document.createElement('span');
+      pill.className = 'tag-pill';
+      pill.innerHTML = `${tag} <span class="remove-tag" style="cursor:pointer; margin-left:5px;">&times;</span>`;
+      pill.querySelector('.remove-tag').onclick = () => {
+        tagArray.splice(index, 1);
+        render();
+      };
+      wrapper.appendChild(pill);
     });
-  });
-}
+  };
 
-if (allergensInput) {
-  allergensInput.addEventListener('keydown', (e) => {
+  input.onkeydown = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault(); 
-      const val = allergensInput.value.trim().replace(/,/g, '');
-      if (val && !allergenTags.includes(val)) {
-        allergenTags.push(val);
-        allergensInput.value = '';
-        renderTags();
-      } else if (val) {
-        allergensInput.value = ''; 
+      e.preventDefault();
+      const val = input.value.trim().replace(/,$/, '');
+      if (val && !tagArray.includes(val)) {
+        tagArray.push(val);
+        input.value = '';
+        render();
       }
     }
-  });
+  };
+
+  return { 
+    render, 
+    setTags: (newTags) => {
+      tagArray.length = 0;
+      if (Array.isArray(newTags)) tagArray.push(...newTags);
+      else if (newTags) tagArray.push(newTags);
+      render();
+    }
+  };
+}
+
+const allergenSystem = setupTagSystem('menu-allergens-input', 'allergen-tags-wrapper', allergenTags);
+const toppingSystem = setupTagSystem('menu-toppings-input', 'topping-tags-wrapper', toppingTags);
+const sauceSystem = setupTagSystem('menu-sauce-input', 'sauce-tags-wrapper', sauceTags);
+const baseSystem = setupTagSystem('menu-base-input', 'base-tags-wrapper', baseTags);
+const proteinSystem = setupTagSystem('menu-proteins-input', 'protein-tags-wrapper', proteinTags);
+
+function renderAllTags() {
+  if (allergenSystem) allergenSystem.render();
+  if (toppingSystem) toppingSystem.render();
+  if (sauceSystem) sauceSystem.render();
+  if (baseSystem) baseSystem.render();
+  if (proteinSystem) proteinSystem.render();
 }
 
 // Seed Mock Data if Firestore is empty
@@ -1287,22 +1311,22 @@ function renderPrepTab() {
             if (item.menuRef) {
                 let servs = item.servings;
                 
-                if (item.menuRef.proteins) {
-                    if (!compGroups['Proteins'][item.menuRef.proteins]) compGroups['Proteins'][item.menuRef.proteins] = 0;
-                    compGroups['Proteins'][item.menuRef.proteins] += servs;
-                }
-                if (item.menuRef.base) {
-                    if (!compGroups['Base'][item.menuRef.base]) compGroups['Base'][item.menuRef.base] = 0;
-                    compGroups['Base'][item.menuRef.base] += servs;
-                }
-                if (item.menuRef.toppings) {
-                    if (!compGroups['Toppings'][item.menuRef.toppings]) compGroups['Toppings'][item.menuRef.toppings] = 0;
-                    compGroups['Toppings'][item.menuRef.toppings] += servs;
-                }
-                if (item.menuRef.sauce) {
-                    if (!compGroups['Sauce'][item.menuRef.sauce]) compGroups['Sauce'][item.menuRef.sauce] = 0;
-                    compGroups['Sauce'][item.menuRef.sauce] += servs;
-                }
+                const processTags = (groupKey, data) => {
+                    if (!data) return;
+                    let tags = Array.isArray(data) ? data : [data];
+                    tags.forEach(t => {
+                        let cleanTag = String(t).trim();
+                        if (cleanTag) {
+                            if (!compGroups[groupKey][cleanTag]) compGroups[groupKey][cleanTag] = 0;
+                            compGroups[groupKey][cleanTag] += servs;
+                        }
+                    });
+                };
+
+                processTags('Proteins', item.menuRef.proteins);
+                processTags('Base', item.menuRef.base);
+                processTags('Toppings', item.menuRef.toppings);
+                processTags('Sauce', item.menuRef.sauce);
             }
         });
 
