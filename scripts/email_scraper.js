@@ -93,45 +93,118 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
     let allItems = [];
     let pickupTimes = [];
 
-    // --- PRIMARY: HTML Table Parsing (The Email Itself) ---
-    if (htmlStr) {
+    // 1. Excel Attachment Parsing (Preferred because it avoids email truncation/clipping)
+    const xlsxAttach = attachments.find(a => a.filename.toLowerCase().endsWith('.xlsx'));
+    if (xlsxAttach) {
+        try {
+            const workbook = XLSX.read(xlsxAttach.content, { type: 'buffer' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            let mainBlocks = [];
+            let activeBlock = null;
+            let summarySides = [];
+            let inSidesSection = false;
+
+            data.forEach((row, idx) => {
+                if (!row || idx < 1) return;
+                let colA = String(row[0] || "").trim();
+                let colB = String(row[1] || "").trim();
+                let colD = String(row[3] || "").trim();
+                let colG = String(row[6] || "").trim();
+
+                // Detect the start of the summarized sides table at the bottom
+                let lowerA = colA.toLowerCase();
+                if (lowerA.includes("totals from above") || lowerA.includes("(totals from")) {
+                    inSidesSection = true; return;
+                }
+
+                if (!inSidesSection) {
+                    // --- MEAL BLOCK LOGIC ---
+                    let countMatch = colA.match(/^(\d+)x?$/i) || colA.match(/(\d+)/);
+                    if (countMatch && !lowerA.includes("total")) {
+                        activeBlock = {
+                            meal: colB,
+                            groupTotal: parseInt(countMatch[1]),
+                            rows: [],
+                            pickupTime: colG
+                        };
+                        mainBlocks.push(activeBlock);
+                    }
+                    if (activeBlock) {
+                        activeBlock.rows.push({ note: colD, time: colG });
+                    }
+                } else {
+                    // --- SIDES SUMMARY LOGIC (Bottom Table) ---
+                    let countMatch = colA.match(/(\d+)/);
+                    if (countMatch && colB && !colB.toLowerCase().includes("sides")) {
+                        summarySides.push({ name: colB, amount: parseInt(countMatch[1]) });
+                    }
+                }
+            });
+
+            mainBlocks.forEach(block => {
+                if (block.pickupTime && block.pickupTime.toLowerCase() !== 'pickup') {
+                    pickupTimes.push(block.pickupTime);
+                }
+                
+                let noteGroups = {};
+                let totalRowsWithNotes = 0;
+                block.rows.forEach(r => {
+                    if (r.note && r.note.trim().length > 1) {
+                        let cleanNote = r.note.trim();
+                        noteGroups[cleanNote] = (noteGroups[cleanNote] || 0) + 1;
+                        totalRowsWithNotes++;
+                    }
+                });
+
+                let baseCount = block.groupTotal - totalRowsWithNotes;
+                
+                // Match to official menu title but fallback to raw name to ensure counts stay accurate
+                let finalName = block.meal;
+                for (const m of menuItemsMap) {
+                    if (block.meal.toLowerCase().includes(m.title.toLowerCase())) {
+                        finalName = m.title; break;
+                    }
+                }
+
+                if (baseCount > 0) allItems.push({ name: finalName, amount: baseCount, notes: "" });
+                for (const noteText in noteGroups) {
+                    allItems.push({ name: finalName, amount: noteGroups[noteText], notes: noteText });
+                }
+            });
+
+            summarySides.forEach(side => {
+                let finalSide = side.name;
+                for (const m of menuItemsMap) {
+                    if (side.name.toLowerCase().includes(m.title.toLowerCase())) {
+                        finalSide = m.title; break;
+                    }
+                }
+                allItems.push({ name: finalSide, amount: side.amount, notes: "" });
+            });
+        } catch (e) {
+            console.error(`❌ Excel Error:`, e);
+        }
+    }
+
+    // 2. HTML Table Parsing (Fallback)
+    if (allItems.length === 0 && htmlStr) {
         const $ = cheerio.load(htmlStr);
         $('table tr').each((i, row) => {
             const cells = $(row).children('td, th');
             if (cells.length >= 3) {
                 let countTxt = $(cells[0]).text().trim();
                 let mealTxt = $(cells[1]).text().trim();
-                let lowerTxt = mealTxt.toLowerCase();
-
-                // Skip header or footer rows
-                if (!mealTxt || lowerTxt === 'meal' || lowerTxt.includes('total') || lowerTxt.includes('sides')) return;
-
-                // Handle Meal
                 let amount = parseInt(countTxt) || 1;
-                let matchedMeal = mealTxt;
-                for (const m of menuItemsMap) {
-                    if (lowerTxt.includes(m.title.toLowerCase()) || (m.platformOverrides?.Forkable?.alias && lowerTxt.includes(m.platformOverrides.Forkable.alias.toLowerCase()))) {
-                        matchedMeal = m.title; break;
-                    }
-                }
-                allItems.push({ name: matchedMeal, amount: amount, notes: $(cells[3]).text().trim() });
-
-                // Handle Sides in Column 3
-                let optionsTxt = $(cells[2]).text().trim();
-                if (optionsTxt.toLowerCase().includes("add side:")) {
-                    let sideRaw = optionsTxt.replace(/add side[:\s]*/i, '').trim();
-                    let matchedSide = sideRaw;
-                    for (const m of menuItemsMap) {
-                        if (sideRaw.toLowerCase().includes(m.title.toLowerCase())) { matchedSide = m.title; break; }
-                    }
-                    allItems.push({ name: matchedSide, amount: amount, notes: "" });
+                if (mealTxt && !mealTxt.toLowerCase().includes('meal') && !mealTxt.toLowerCase().includes('total')) {
+                    allItems.push({ name: mealTxt, amount: amount, notes: $(cells[3]).text().trim() });
                 }
             }
         });
     }
 
     if (allItems.length === 0) {
-        await logScraperAction("Forkable Skip", { reason: "No items found in email HTML", formattedDate });
+        await logScraperAction("Forkable Skip", { reason: "No items parsed", formattedDate });
         return;
     }
 
@@ -153,6 +226,14 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
         status: currentStatus, overallNotes: "Consolidated Daily Forkable Order.",
         items: finalItems, createdAt: new Date().toISOString(), isDeleted: false
     };
+
+    if (process.argv.includes('--dry-run')) {
+        console.log(`\n[DRY RUN] Order ID: ${orderId} | Date: ${formattedDate}`);
+        finalItems.forEach(i => console.log(`  - ${i.amount}x ${i.name} ${i.notes ? '['+i.notes+']' : ''}`));
+        console.log(`  Summary: ${finalItems.length} types of items. Total items: ${finalItems.reduce((acc, i) => acc + i.amount, 0)}`);
+        console.log("-------------------------------------------\n");
+        return;
+    }
 
     const docRef = doc(db, 'orders', orderId);
     await setDoc(docRef, newOrder, { merge: true });
