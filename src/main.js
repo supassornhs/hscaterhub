@@ -1429,6 +1429,7 @@ function toggleSidebar() {
     
     if (sidebar) {
         sidebar.classList.toggle('collapsed');
+        sidebar.classList.toggle('active'); // Mobile slide-out support
         if (mainContent) mainContent.classList.toggle('expanded');
         
         const isCollapsed = sidebar.classList.contains('collapsed');
