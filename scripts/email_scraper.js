@@ -161,15 +161,24 @@ async function processForkableEmail(text, htmlStr = "", attachments = [], emailD
                 
                 // Match to official menu title but fallback to raw name to ensure counts stay accurate
                 let finalName = block.meal;
+                let isSideItem = false;
                 for (const m of menuItemsMap) {
                     if (block.meal.toLowerCase().includes(m.title.toLowerCase())) {
                         finalName = m.title; break;
                     }
                 }
 
-                if (baseCount > 0) allItems.push({ name: finalName, amount: baseCount, notes: "" });
-                for (const noteText in noteGroups) {
-                    allItems.push({ name: finalName, amount: noteGroups[noteText], notes: noteText });
+                // --- REDUNDANCY CHECK ---
+                // If this item's name is already in the summary sides list, skip it here to avoid double-counting
+                if (summarySides.some(s => s.name.toLowerCase() === block.meal.toLowerCase() || s.name.toLowerCase() === finalName.toLowerCase())) {
+                    isSideItem = true;
+                }
+
+                if (!isSideItem) {
+                    if (baseCount > 0) allItems.push({ name: finalName, amount: baseCount, notes: "" });
+                    for (const noteText in noteGroups) {
+                        allItems.push({ name: finalName, amount: noteGroups[noteText], notes: noteText });
+                    }
                 }
             });
 
