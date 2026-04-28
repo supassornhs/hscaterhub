@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer';
+import fs from 'fs';
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,119 +19,185 @@ const FORKABLE_EMAIL = "supassorn@holyshred.co";
 const FORKABLE_PASS = "Supassorn_2493";
 
 (async () => {
-    console.log("🚀 Launching Forkable Full-Week Scraper...");
+    console.log("🚀 STARTING REFINED HIERARCHY SYNC...");
     const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 1200 });
 
     try {
-        console.log("📡 Logging in...");
         await page.goto("https://forkable.com/fpp/login", { waitUntil: 'networkidle2' });
-        await new Promise(r => setTimeout(r, 2000));
-
-        await page.type('input[type="email"]', FORKABLE_EMAIL, { delay: 60 });
+        await page.type('input[type="email"]', FORKABLE_EMAIL, { delay: 100 });
         await page.keyboard.press('Enter');
-        await new Promise(r => setTimeout(r, 4000));
-
-        await page.type('input[type="password"]', FORKABLE_PASS, { delay: 60 });
+        await new Promise(r => setTimeout(r, 3000));
+        await page.type('input[type="password"]', FORKABLE_PASS, { delay: 100 });
         await page.keyboard.press('Enter');
         await new Promise(r => setTimeout(r, 8000));
 
-        if (page.url().includes('login')) {
-            console.error("❌ Login failed.");
-            process.exit(1);
-        }
-
-        const todayDate = new Date();
-        const monday = new Date(todayDate);
-        monday.setDate(todayDate.getDate() - (todayDate.getDay() === 0 ? 6 : todayDate.getDay() - 1));
+        const targetDate = '2026-04-27';
+        console.log(`📡 Accessing Dashboard for ${targetDate}...`);
+        const directUrl = `https://forkable.com/fpp/2297/${targetDate}/17201/958145,956765,960057,957695`;
+        await page.goto(directUrl, { waitUntil: 'networkidle2', timeout: 60000 });
         
-        const weekDates = [];
-        for (let i = 0; i < 5; i++) {
-            const d = new Date(monday);
-            d.setDate(monday.getDate() + i);
-            weekDates.push(d.toISOString().split('T')[0]);
-        }
+        // Wait for the content to actually render
+        console.log("⏳ Waiting for pickup cards to load...");
+        await new Promise(r => setTimeout(r, 8000));
 
-        console.log(`📅 Syncing week: ${weekDates.join(', ')}`);
-
-        let syncedCount = 0;
-
-        for (const targetDate of weekDates) {
-            const targetUrl = `https://forkable.com/fpp/2297/${targetDate}/17201`;
-            console.log(`\n⏳ Checking ${targetDate}...`);
+        console.log("🔍 Extracting orders from Detail View...");
+        const results = await page.evaluate(() => {
+            const bodyText = document.body.innerText;
             
-            await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-            await new Promise(r => setTimeout(r, 5000));
+            // 1. Find all times - more relaxed to catch hidden characters
+            const timeRegex = /(\d{1,2}:\d{2})\s*[A|P]M/gi;
+            const times = Array.from(bodyText.matchAll(timeRegex)).map(m => ({
+                index: m.index,
+                time: m[0]
+            }));
 
-            const detailedData = await page.evaluate(() => {
-                const results = [];
-                const txt = document.body.innerText;
-                const groupRegex = /Group\s+([A-Z0-9]+)\s+-\s+([^(\n]+)/i;
-                const elements = Array.from(document.querySelectorAll('*'));
-                const groups = elements.filter(el => groupRegex.test(el.innerText) && el.innerText.length < 5000);
+            // 2. Find all groups
+            const extracted = [];
+            const groupRegex = /Group\s+([A-Z0-9]+)\s+.+?\s+([^\n$]+)/gi;
+            let m;
+            while ((m = groupRegex.exec(bodyText)) !== null) {
+                const code = m[1].replace('FORK-', '').trim();
+                const company = m[2].trim();
+                
+                // Find nearest time BEFORE this group
+                let pickupTime = "undefined";
+                for (let t = times.length - 1; t >= 0; t--) {
+                    if (times[t].index < m.index) {
+                        pickupTime = times[t].time;
+                        break;
+                    }
+                }
 
-                groups.forEach(groupEl => {
-                    const match = groupEl.innerText.match(groupRegex);
-                    if (!match) return;
-                    const code = match[1];
-                    const company = match[2].trim();
-                    const groupText = groupEl.innerText;
-                    const lines = groupText.split('\n').map(l => l.trim()).filter(l => l);
-                    const items = [];
-                    const itemsFound = new Set();
-                    for (let i = 0; i < lines.length; i++) {
-                        if (lines[i].includes('$')) {
-                            const price = lines[i];
-                            const dish = lines[i-1] || "";
-                            const user = lines[i-2] || "";
-                            const key = `${user}-${dish}`.toLowerCase();
-                            if (dish && !itemsFound.has(key)) {
-                                let side = "";
-                                for(let k=1; k<=5; k++) if (lines[i+k] && lines[i+k].includes('Add Side')) side = lines[i+k].replace('»', '').trim();
-                                items.push({ name: dish, user, notes: side });
-                                itemsFound.add(key);
+                const segment = bodyText.substring(m.index, m.index + 8000);
+                const segmentLines = segment.split('\n').map(l => l.trim()).filter(l => l);
+                
+                const items = [];
+                let pIdx = 0;
+                let pendingNotes = [];
+                for (let i = 0; i < segmentLines.length; i++) {
+                    if (segmentLines[i].match(/^\$\d+\.\d{2}$/)) {
+                        let block = segmentLines.slice(pIdx + 1, i).map(l => l.trim()).filter(l => l);
+                        
+                        // Skip summary lines like "10 items", "1 item" or just "10"
+                        while (block.length > 0 && (block[0].match(/^\d+$/) || block[0].toLowerCase().includes(' item') || block[0].includes('Group '))) {
+                            block.shift();
+                        }
+                        
+                        if (block.length >= 1) {
+                            const firstLine = block[0].trim();
+                            const isSideOrNote = firstLine.includes('»') || firstLine.toLowerCase().includes('add side') || firstLine.toLowerCase().includes('please') || firstLine.toLowerCase().includes('no ');
+                            
+                            // Improved name check: 2-4 words, no numbers, handles all whitespace
+                            const words = firstLine.split(/\s+/).filter(w => w.length > 0);
+                            const isName = !isSideOrNote && words.length >= 2 && words.length <= 4 && !/\d/.test(firstLine);
+                            
+                            let rawDish = "";
+                            let extraNotes = "";
+                            if (isName && block.length >= 2) {
+                                rawDish = block[1].replace('»', '').trim();
+                                extraNotes = block.slice(2).map(n => n.replace('»', '').trim()).join(' | ');
+                            } else {
+                                rawDish = firstLine.replace('»', '').trim();
+                                extraNotes = block.slice(1).map(n => n.replace('»', '').trim()).join(' | ');
+                            }
+                            rawDish = rawDish.replace(/^\d+x\s+/, '').trim();
+                            if (isSideOrNote) {
+                                const sideText = extraNotes ? `${rawDish} (${extraNotes})` : rawDish;
+                                if (items.length > 0) {
+                                    const last = items[items.length - 1];
+                                    last.notes = last.notes ? `${last.notes} | ${sideText}` : sideText;
+                                } else {
+                                    pendingNotes.push(sideText);
+                                }
+                            } else if (rawDish) {
+                                let combinedNotes = extraNotes;
+                                if (pendingNotes.length > 0) {
+                                    combinedNotes = pendingNotes.join(' | ') + (combinedNotes ? ` | ${combinedNotes}` : '');
+                                    pendingNotes = [];
+                                }
+                                items.push({ name: rawDish, notes: combinedNotes });
+                            }
+                        }
+                        pIdx = i;
+                    }
+                    if (i > 0 && segmentLines[i].includes('Group ') && segmentLines[i].includes(' - ')) break;
+                }
+                if (items.length > 0) extracted.push({ code, company, items, pickupTime });
+            }
+            return { extracted, timesCount: times.length };
+        });
+
+        const extractedData = results.extracted;
+        const totalItems = extractedData.reduce((acc, o) => acc + o.items.length, 0);
+        
+        console.log(`⏱️  Diagnostic: Found ${results.timesCount} timestamps on the page.`);
+        console.log(`✨ Extracted ${extractedData.length} groups, Total Dishes: ${totalItems}`);
+        
+        for (const o of extractedData) {
+            try {
+                console.log(`   -> Processing Group ${o.code} (${o.company})...`);
+                
+                // --- SIDE AGGREGATION ---
+                const sideCounts = {};
+                for (const item of o.items) {
+                    if (item.notes) {
+                        const matches = item.notes.match(/Add Side:\s*([^|()]+)/g);
+                        if (matches) {
+                            for (const m of matches) {
+                                const sideName = m.replace(/Add Side:\s*/, '').trim();
+                                sideCounts[sideName] = (sideCounts[sideName] || 0) + 1;
                             }
                         }
                     }
-                    if (items.length > 0) results.push({ code, company, items });
-                });
-                return results;
-            });
+                }
 
-            for (const order of detailedData) {
-                const dbOrderId = `FORK-$${order.code}-$${targetDate}`; // Fixed ID pattern
-                const orderData = {
-                    id: dbOrderId.replace(/\$/g, ''),
-                    platform: "Forkable",
-                    customerName: order.company,
+                const aggregatedItems = [...o.items.map(it => ({ name: it.name, amount: 1, notes: it.notes }))];
+                for (const [sideName, count] of Object.entries(sideCounts)) {
+                    aggregatedItems.push({
+                        name: sideName,
+                        amount: count,
+                        notes: "Aggregated Side Total"
+                    });
+                }
+
+                const id = `${o.code}-${targetDate}`;
+                console.log(`   📤 Uploading ${id} with ${aggregatedItems.length} items...`);
+                await setDoc(doc(db, 'orders', id), {
+                    id, 
+                    platform: "Forkable", 
+                    customerName: o.company, 
+                    deliveryDate: targetDate, 
+                    pickupTime: o.pickupTime, 
+                    pickUpTime: o.pickupTime,
+                    isDeleted: false, 
+                    status: "New", 
                     typeOfOrder: "Meal Manager",
-                    deliveryDate: targetDate,
-                    status: "New",
-                    items: order.items.map(itm => ({
-                        name: itm.name,
-                        amount: 1,
-                        notes: itm.notes
-                    })),
-                    createdAt: new Date().toISOString(),
-                    isDeleted: false, // Added isDeleted flag
-                    manualOverride: false
-                };
-
-                const todayStr = new Date().toISOString().split('T')[0];
-                if (targetDate < todayStr) orderData.status = "Completed";
-
-                await setDoc(doc(db, 'orders', orderData.id), orderData, { merge: true });
-                console.log(`      ✅ Synced ${order.company} (${targetDate})`);
-                syncedCount++;
+                    items: aggregatedItems
+                }, { merge: true });
+            } catch (err) {
+                console.error(`❌ Failed to sync group ${o.code}:`, err);
             }
         }
-        console.log(`\n🎉 Full Sync Finished! ${syncedCount} Forkable orders updated.`);
-        process.exit(0);
-    } catch (err) {
-        console.error(err);
-        process.exit(1);
+
+        // --- CLEANUP PHASE ---
+        console.log("🧹 Cleaning up legacy and incorrect duplicates...");
+        const q = query(collection(db, 'orders'), where('deliveryDate', '==', targetDate));
+        const snapshot = await getDocs(q);
+        for (const d of snapshot.docs) {
+            if (d.id.startsWith('FORK-') || d.id.startsWith('Astranis-') || d.id.startsWith('Descript-')) {
+                console.log(`🗑️ Removing incorrect entry: ${d.id}`);
+                await deleteDoc(doc(db, 'orders', d.id));
+            }
+        }
+        console.log("✨ Sync complete. Waiting for Firebase to settle...");
+        await new Promise(r => setTimeout(r, 3000));
+        console.log("🏁 Done.");
+    } catch (e) {
+        console.error(e);
     } finally {
         await browser.close();
+        process.exit(0);
     }
 })();
