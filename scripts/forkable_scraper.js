@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer';
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc } from "firebase/firestore";
 import * as dotenv from 'dotenv';
 import { sendAlertEmail } from './mailer.js';
 
@@ -9,8 +9,12 @@ dotenv.config();
 const firebaseConfig = {
     apiKey: "AIzaSyCj__TCfYSF-1y4uR-UOId_aPWWwy4-W5A",
     authDomain: "hscaterhub.firebaseapp.com",
-    projectId: "hscaterhub"
+    projectId: "hscaterhub",
+    storageBucket: "hscaterhub.firebasestorage.app",
+    messagingSenderId: "191852835453",
+    appId: "1:191852835453:web:6e8498beaecbb85f637714"
 };
+
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
@@ -31,7 +35,7 @@ const db = getFirestore(app);
         args: ['--no-sandbox', '--disable-setuid-sandbox'] 
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 1000 });
+    await page.setViewport({ width: 1280, height: 1200 });
 
     // Inject Cookie
     const parsedCookies = FORKABLE_COOKIE.split(';').map(c => {
@@ -48,7 +52,7 @@ const db = getFirestore(app);
         
         // Wait for dashboard to load
         await page.waitForFunction(() => 
-            document.body.innerText.includes('Pickups for') || 
+            document.body.innerText.includes('Home') || 
             document.body.innerText.includes('Login'), 
             { timeout: 15000 }
         );
@@ -65,14 +69,13 @@ const db = getFirestore(app);
         // Iterate through the days of the week visible on the main screen
         const dayRows = await page.evaluate(() => {
             const rows = [];
-            const elements = Array.from(document.querySelectorAll('div, span, p'));
+            const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4'));
             // Look for patterns like "Monday, Apr 27"
             const dayRegex = /(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s[A-Z][a-z]+\s\d+/;
             
             elements.forEach(el => {
-                if (dayRegex.test(el.innerText) && el.innerText.length < 50) {
-                    // Avoid duplicates and find the container that might be clickable
-                    const text = el.innerText.trim();
+                const text = el.innerText ? el.innerText.trim() : "";
+                if (dayRegex.test(text) && text.length < 50) {
                     if (!rows.find(r => r.text === text)) {
                         rows.push({ text: text });
                     }
@@ -81,40 +84,49 @@ const db = getFirestore(app);
             return rows;
         });
 
-        console.log(`📅 Found ${dayRows.length} days with pickups.`);
+        console.log(`📅 Found ${dayRows.length} days with pickups:`, dayRows.map(d => d.text).join(' | '));
 
         let syncedCount = 0;
 
         for (const day of dayRows) {
             console.log(`\n🔍 Checking orders for ${day.text}...`);
             
-            // Expand the day if needed
+            // Expand the day by clicking elements with that text
             await page.evaluate((dayText) => {
                 const elements = Array.from(document.querySelectorAll('*'));
                 const dayEl = elements.find(el => el.innerText && el.innerText.trim() === dayText);
-                if (dayEl) dayEl.click();
+                if (dayEl) {
+                    dayEl.click();
+                    // Sometimes we need to click the parent or a chevron
+                    if (dayEl.parentElement && dayEl.parentElement.tagName === 'DIV') dayEl.parentElement.click();
+                }
             }, day.text);
             
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 2500));
 
-            // Look for "View Completed Order" button
-            const hasViewBtn = await page.evaluate(() => {
-                const buttons = Array.from(document.querySelectorAll('button, a'));
-                const btn = buttons.find(b => b.innerText && b.innerText.includes('View') && b.innerText.includes('Order'));
+            // Look for "View Complete Order" button
+            const clickResult = await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button, a, div, span'));
+                const btn = buttons.find(b => b.innerText && (b.innerText.includes('View Complete Order') || b.innerText.includes('View Order')));
                 if (btn) {
+                    btn.scrollIntoView();
                     btn.click();
                     return true;
                 }
                 return false;
             });
 
-            if (!hasViewBtn) {
-                console.log(`   ⏭️ No "View Completed Order" button found for ${day.text}. Skipping.`);
+            if (!clickResult) {
+                console.log(`   ⏭️ Could not find or click "View Complete Order" button for ${day.text}.`);
                 continue;
             }
 
-            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});
-            await new Promise(r => setTimeout(r, 3000));
+            console.log(`   👉 Clicked "View Complete Order". Waiting for navigation...`);
+            await new Promise(r => setTimeout(r, 4000));
+
+            // Check if we navigated
+            const currentUrl = page.url();
+            console.log(`   📍 Current URL: ${currentUrl}`);
 
             // Now on the detailed order page
             const detailedData = await page.evaluate(() => {
@@ -125,21 +137,19 @@ const db = getFirestore(app);
                 const dateHeaderMatch = fullText.match(/(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+([A-Z][a-z]+)\s+(\d+),\s+(\d{4})/i);
                 let formattedDate = "";
                 if (dateHeaderMatch) {
-                    const months = { 'January':1, 'February':2, 'March':3, 'April':4, 'May':5, 'June':6, 'July':7, 'August':8, 'September':9, 'October':10, 'November':11, 'December':12 };
+                    const months = { 'January':'01', 'February':'02', 'March':'03', 'April':'04', 'May':'05', 'June':'06', 'July':'07', 'August':'08', 'September':'09', 'October':'10', 'November':'11', 'December':'12' };
                     const yr = dateHeaderMatch[4];
-                    const mo = String(months[dateHeaderMatch[2]] || 1).padStart(2, '0');
+                    const mo = months[dateHeaderMatch[2]] || '01';
                     const dy = String(dateHeaderMatch[3]).padStart(2, '0');
                     formattedDate = `${yr}-${mo}-${dy}`;
+                } else {
+                    // Fallback to today UTC if not found
+                    formattedDate = new Date().toISOString().split('T')[0];
                 }
 
-                // Find all pickup blocks
-                // Pickup times are often highlighted/positioned at the top of a group
-                // We'll search for time patterns like "10:30 AM"
-                const elements = Array.from(document.querySelectorAll('*'));
                 const timeRegex = /\d{1,2}:\d{2}\s+(AM|PM)/;
+                const elements = Array.from(document.querySelectorAll('*'));
                 
-                // Find indices of times in the text to chunk the data
-                // Or better, find elements that look like time headers
                 const timeHeaders = elements.filter(el => 
                     el.innerText && 
                     timeRegex.test(el.innerText.trim()) && 
@@ -149,17 +159,14 @@ const db = getFirestore(app);
 
                 timeHeaders.forEach(timeEl => {
                     const pickupTime = timeEl.innerText.trim();
-                    
-                    // The parent container probably holds the groups and items
-                    // Let's find the container that contains this time and the next content blocks
                     let container = timeEl.parentElement;
-                    while (container && container.innerText.length < 200) {
+                    // Find a container that likely holds the group info (often a row or section)
+                    while (container && container.innerText.length < 100 && container.parentElement) {
                         container = container.parentElement;
                     }
 
                     if (!container) return;
 
-                    // Inside this container, look for "Group XX - Company Name"
                     const groupTitleRegex = /Group\s+([A-Z0-9]+)\s+-\s+([^(\n]+)/i;
                     const groupMatches = Array.from(container.querySelectorAll('*'))
                         .filter(el => groupTitleRegex.test(el.innerText))
@@ -172,37 +179,24 @@ const db = getFirestore(app);
                             };
                         });
 
-                    groupMatches.forEach((group, idx) => {
-                        // Find items for this group
-                        // Items are usually siblings or inside a following sibling container
+                    groupMatches.forEach((group) => {
                         const items = [];
-                        let nextEl = group.el.nextElementSibling;
-                        if (!nextEl) nextEl = group.el.parentElement.nextElementSibling;
-
-                        // Scan until the next group or end of container
-                        // This is tricky, let's use a simpler heuristic: look for item rows
-                        // Item rows have: Name, Dish, Price, and maybe "Add Side"
-                        
-                        // We'll search for the next table or list of items
-                        const itemContainer = nextEl;
-                        if (itemContainer) {
-                            const lines = itemContainer.innerText.split('\n').map(l => l.trim()).filter(l => l);
-                            
+                        // Search for items in siblings or children of following siblings
+                        let scanEl = group.el;
+                        while (scanEl && items.length === 0) {
+                            const lines = scanEl.innerText.split('\n').map(l => l.trim()).filter(l => l);
                             for (let i = 0; i < lines.length; i++) {
-                                // Pattern: "Name dishName $price" or "Name [newline] dishName [newline] $price"
-                                // Let's try to find lines with prices
-                                if (lines[i].includes('$')) {
+                                if (lines[i].includes('$') && lines[i].match(/\$\d+\.\d{2}/)) {
                                     const priceLine = lines[i];
                                     const dishLine = lines[i-1] || "";
                                     const nameLine = lines[i-2] || "";
                                     
-                                    // Check if there's a side instruction following
                                     let sideNote = "";
                                     if (lines[i+1] && lines[i+1].includes('Add Side')) {
                                         sideNote = lines[i+1].replace('»', '').trim();
                                     }
 
-                                    if (nameLine && dishLine && priceLine.match(/\$\d+\.\d{2}/)) {
+                                    if (dishLine && !dishLine.includes('Group') && !dishLine.includes(pickupTime)) {
                                         items.push({
                                             name: dishLine,
                                             user: nameLine,
@@ -212,6 +206,8 @@ const db = getFirestore(app);
                                     }
                                 }
                             }
+                            scanEl = scanEl.nextElementSibling || (scanEl.parentElement ? scanEl.parentElement.nextElementSibling : null);
+                            if (scanEl && scanEl.innerText.includes('Group')) break; // Stop at next group
                         }
 
                         if (items.length > 0) {
@@ -237,7 +233,6 @@ const db = getFirestore(app);
             for (const order of detailedData) {
                 const dbOrderId = order.orderId;
                 
-                // Prepare final payload
                 const finalOrder = {
                     id: order.rawId,
                     platform: "Forkable",
@@ -248,8 +243,8 @@ const db = getFirestore(app);
                     deliveryMethod: "Platform",
                     pickUpTime: order.pickUpTime,
                     subtotal: order.subtotal,
-                    total: order.subtotal * 1.1, // Estimating tax/fees
-                    netPayout: order.subtotal * 0.9, // Estimating commission
+                    total: order.subtotal, 
+                    netPayout: order.subtotal,
                     status: "New",
                     overallNotes: "Automatically extracted via Forkable Dashboard scraper.",
                     items: order.items.map(itm => ({
@@ -260,13 +255,11 @@ const db = getFirestore(app);
                     createdAt: new Date().toISOString()
                 };
 
-                // Check status based on date
                 const today = new Date().toISOString().split('T')[0];
                 if (order.deliveryDate < today) {
                     finalOrder.status = "Completed";
                 }
 
-                // Sync to Firestore if no manual override
                 const docRef = doc(db, 'orders', dbOrderId);
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists() && (docSnap.data().manualOverride || docSnap.data().isDeleted)) {
@@ -275,21 +268,19 @@ const db = getFirestore(app);
                 }
 
                 await setDoc(docRef, finalOrder, { merge: true });
-                console.log(`      ✅ Synced Order ${dbOrderId} (${order.customerName})`);
+                console.log(`      ✅ Synced Order ${dbOrderId} (${order.customerName}) - ${order.items.length} items`);
                 syncedCount++;
             }
 
-            // Go back to the week view
-            await page.evaluate(() => {
-                const backBtn = Array.from(document.querySelectorAll('a, button'))
-                    .find(el => el.innerText && el.innerText.toLowerCase().includes('back to full week'));
-                if (backBtn) backBtn.click();
-            });
+            // Go back or return to the main dashboard URL
+            await page.goto("https://forkable.com/fpp/2297/17201", { waitUntil: 'networkidle2' });
             await new Promise(r => setTimeout(r, 2000));
         }
 
         await setDoc(doc(db, 'system', 'crawlers'), { 'Forkable': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
-        console.log(`\n🎉 Processed ${syncedCount} Forkable orders. System Shutdown.`);
+        console.log(`\n🎉 Processed ${syncedCount} total Forkable orders. System Shutdown.`);
+
+        await logScraperAction("Run Success", { syncedCount, platform: 'Forkable' });
 
     } catch (err) {
         console.error("❌ Fatal Error during scraping:", err);
