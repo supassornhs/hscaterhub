@@ -47,7 +47,8 @@ async function runAllScrapers() {
         "scripts/email_scraper.js",
         "scripts/ezcater_scraper.js",
         "scripts/clubfeast_scraper.js",
-        "scripts/cater2me_scraper.js"
+        "scripts/cater2me_scraper.js",
+        "scripts/forkable_scraper.js"
     ];
     
     for (const script of scripts) {

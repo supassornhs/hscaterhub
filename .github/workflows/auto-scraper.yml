@@ -41,3 +41,7 @@ jobs:
       - name: Run Hungry Scraper
         run: node scripts/hungry_scraper.js
         continue-on-error: true
+
+      - name: Run Forkable Scraper
+        run: node scripts/forkable_scraper.js
+        continue-on-error: true
