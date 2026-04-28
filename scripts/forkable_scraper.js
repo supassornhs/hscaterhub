@@ -18,38 +18,51 @@ const FORKABLE_EMAIL = "supassorn@holyshred.co";
 const FORKABLE_PASS = "Supassorn_2493";
 
 (async () => {
-    console.log("🚀 Launching Forkable Final Sync (Keyboard Flow)...");
+    console.log("🚀 Launching Forkable Full-Week Scraper...");
     const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
     const page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 1200 });
 
     try {
+        console.log("📡 Logging in...");
         await page.goto("https://forkable.com/fpp/login", { waitUntil: 'networkidle2' });
         await new Promise(r => setTimeout(r, 2000));
 
-        console.log("📧 Entering email...");
-        await page.type('input[type="email"]', FORKABLE_EMAIL, { delay: 100 });
+        await page.type('input[type="email"]', FORKABLE_EMAIL, { delay: 60 });
         await page.keyboard.press('Enter');
-        
         await new Promise(r => setTimeout(r, 4000));
 
-        console.log("🔑 Entering password...");
-        await page.type('input[type="password"]', FORKABLE_PASS, { delay: 100 });
+        await page.type('input[type="password"]', FORKABLE_PASS, { delay: 60 });
         await page.keyboard.press('Enter');
-        
         await new Promise(r => setTimeout(r, 8000));
-        console.log(`📍 URL: ${page.url()}`);
 
-        const today = new Date().toISOString().split('T')[0];
-        const targetUrl = `https://forkable.com/fpp/2297/${today}/17201`;
-        await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-        await new Promise(r => setTimeout(r, 6000));
-
-        const bodyTxt = await page.evaluate(() => document.body.innerText);
-        if (bodyTxt.includes('Restaurant Login')) {
+        if (page.url().includes('login')) {
             console.error("❌ Login failed.");
-        } else {
-            console.log("✅ Logged in! Parsing orders...");
+            process.exit(1);
+        }
+
+        const todayDate = new Date();
+        const monday = new Date(todayDate);
+        monday.setDate(todayDate.getDate() - (todayDate.getDay() === 0 ? 6 : todayDate.getDay() - 1));
+        
+        const weekDates = [];
+        for (let i = 0; i < 5; i++) {
+            const d = new Date(monday);
+            d.setDate(monday.getDate() + i);
+            weekDates.push(d.toISOString().split('T')[0]);
+        }
+
+        console.log(`📅 Syncing week: ${weekDates.join(', ')}`);
+
+        let syncedCount = 0;
+
+        for (const targetDate of weekDates) {
+            const targetUrl = `https://forkable.com/fpp/2297/${targetDate}/17201`;
+            console.log(`\n⏳ Checking ${targetDate}...`);
+            
+            await page.goto(targetUrl, { waitUntil: 'networkidle2' });
+            await new Promise(r => setTimeout(r, 5000));
+
             const detailedData = await page.evaluate(() => {
                 const results = [];
                 const txt = document.body.innerText;
@@ -58,16 +71,16 @@ const FORKABLE_PASS = "Supassorn_2493";
                 const groups = elements.filter(el => groupRegex.test(el.innerText) && el.innerText.length < 5000);
 
                 groups.forEach(groupEl => {
-                    const txt = groupEl.innerText;
-                    const match = txt.match(groupRegex);
+                    const match = groupEl.innerText.match(groupRegex);
                     if (!match) return;
                     const code = match[1];
                     const company = match[2].trim();
-                    const lines = txt.split('\n').map(l => l.trim()).filter(l => l);
+                    const groupText = groupEl.innerText;
+                    const lines = groupText.split('\n').map(l => l.trim()).filter(l => l);
                     const items = [];
                     const itemsFound = new Set();
                     for (let i = 0; i < lines.length; i++) {
-                        if (lines[i].includes('$') && lines[i].match(/\$\d+\.\d{2}/)) {
+                        if (lines[i].includes('$')) {
                             const price = lines[i];
                             const dish = lines[i-1] || "";
                             const user = lines[i-2] || "";
@@ -75,7 +88,7 @@ const FORKABLE_PASS = "Supassorn_2493";
                             if (dish && !itemsFound.has(key)) {
                                 let side = "";
                                 for(let k=1; k<=5; k++) if (lines[i+k] && lines[i+k].includes('Add Side')) side = lines[i+k].replace('»', '').trim();
-                                items.push({ name: dish, notes: side, user: user });
+                                items.push({ name: dish, user, notes: side });
                                 itemsFound.add(key);
                             }
                         }
@@ -86,19 +99,38 @@ const FORKABLE_PASS = "Supassorn_2493";
             });
 
             for (const order of detailedData) {
-                const dbOrderId = `FORK-${order.code}-${today}`;
-                await setDoc(doc(db, 'orders', dbOrderId), {
-                    id: dbOrderId, platform: "Forkable", customerName: order.company,
-                    deliveryDate: today, status: "New", items: order.items.map(itm => ({ name: itm.name, amount: 1, notes: itm.notes })),
-                    createdAt: new Date().toISOString()
-                }, { merge: true });
-                console.log(`      ✅ Synced ${order.company}`);
+                const dbOrderId = `FORK-$${order.code}-$${targetDate}`; // Fixed ID pattern
+                const orderData = {
+                    id: dbOrderId.replace(/\$/g, ''),
+                    platform: "Forkable",
+                    customerName: order.company,
+                    typeOfOrder: "Meal Manager",
+                    deliveryDate: targetDate,
+                    status: "New",
+                    items: order.items.map(itm => ({
+                        name: itm.name,
+                        amount: 1,
+                        notes: itm.notes
+                    })),
+                    createdAt: new Date().toISOString(),
+                    isDeleted: false, // Added isDeleted flag
+                    manualOverride: false
+                };
+
+                const todayStr = new Date().toISOString().split('T')[0];
+                if (targetDate < todayStr) orderData.status = "Completed";
+
+                await setDoc(doc(db, 'orders', orderData.id), orderData, { merge: true });
+                console.log(`      ✅ Synced ${order.company} (${targetDate})`);
+                syncedCount++;
             }
         }
+        console.log(`\n🎉 Full Sync Finished! ${syncedCount} Forkable orders updated.`);
+        process.exit(0);
     } catch (err) {
         console.error(err);
+        process.exit(1);
     } finally {
         await browser.close();
-        process.exit(0);
     }
 })();
