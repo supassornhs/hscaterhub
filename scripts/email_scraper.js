@@ -5,7 +5,6 @@ import { simpleParser } from 'mailparser';
 import * as dotenv from 'dotenv';
 import { sendAlertEmail } from './mailer.js';
 import * as XLSX from 'xlsx';
-import * as cheerio from 'cheerio';
 
 dotenv.config();
 
@@ -59,19 +58,6 @@ const config = {
     }
 };
 
-// Polyfill for File/Blob in Node < 20
-if (typeof global.File === 'undefined') {
-    global.File = class File extends Blob {
-        constructor(parts, filename, options = {}) {
-            super(parts, options);
-            this.name = filename;
-            this.lastModified = options.lastModified || Date.now();
-        }
-    };
-}
-
-
-
 async function processDoordashEmail(text) {
     let subjectMatch = text.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i);
     if (!subjectMatch) return;
@@ -91,17 +77,25 @@ async function processDoordashEmail(text) {
 }
 
 async function run() {
-    console.log("🚀 Starting Scraper...");
+    console.log("🚀 Starting Optimized Email Scraper...");
     try {
         const connection = await imaps.connect(config);
         await connection.openBox('INBOX');
+
+        // Optimization 1: Reduce lookback to 7 days
         const lookbackDate = new Date();
-        lookbackDate.setDate(lookbackDate.getDate() - 30); 
-        const searchCriteria = [['SINCE', lookbackDate]];
+        lookbackDate.setDate(lookbackDate.getDate() - 7); 
+        
+        // Optimization 2: Filter server-side for DoorDash specifically
+        const searchCriteria = [
+            ['SINCE', lookbackDate],
+            ['HEADER', 'SUBJECT', 'doordash']
+        ];
+        
         const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
 
         let messages = await connection.search(searchCriteria, fetchOptions);
-        console.log(`✉️ Found ${messages.length} messages.`);
+        console.log(`✉️ Found ${messages.length} relevant DoorDash messages.`);
         await logScraperAction("Run Start", { messageCount: messages.length });
 
         for (let item of messages) {
@@ -109,18 +103,11 @@ async function run() {
                 let all = item.parts.find(p => p.which === '');
                 let headerPart = item.parts.find(p => p.which === 'HEADER').body;
                 let subjectHeader = (headerPart.subject || [''])[0] || '';
-                let emailReceivedDate = (headerPart.date || [null])[0] || null;
-                let lowerSub = subjectHeader.toLowerCase();
-
-                if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes') || lowerSub.includes('action required') || lowerSub.includes('doordash')) {
-                    let parsedMail = await simpleParser(all.body);
-                    let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
-                    if (lowerSub.includes('forkable') || lowerSub.includes('confirm changes')) {
-                        await processForkableEmail(combinedText, parsedMail.html, parsedMail.attachments, emailReceivedDate);
-                    } else if (lowerSub.includes('doordash')) {
-                        await processDoordashEmail(combinedText);
-                    }
-                }
+                
+                let parsedMail = await simpleParser(all.body);
+                let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
+                await processDoordashEmail(combinedText);
+                
             } catch (innerErr) { console.error("❌ Msg Error:", innerErr.message); }
         }
         connection.end();
