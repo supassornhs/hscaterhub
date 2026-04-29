@@ -33,115 +33,173 @@ const FORKABLE_PASS = "Supassorn_2493";
         await new Promise(r => setTimeout(r, 8000));
 
         // --- DYNAMIC DATE HANDLING ---
-        // Allow passing a date as an argument: node scripts/forkable_scraper.js 2026-04-29
         let targetDate = process.argv[2]; 
         if (!targetDate) {
             const today = new Date();
             targetDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         }
         
-        console.log(`📡 Accessing Dashboard for date: ${targetDate}...`);
+        console.log(`📡 Accessing Daily Summary for: ${targetDate}...`);
         
-        // Use the dynamic targetDate in the URL
-        const directUrl = `https://forkable.com/fpp/2297/${targetDate}/17201/958145,956765,960057,957695`;
-        await page.goto(directUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // Wait for the content to actually render
-        console.log("⏳ Waiting for pickup cards to load...");
-        await new Promise(r => setTimeout(r, 8000));
+        // Go to the main day page
+        const dayUrl = `https://forkable.com/fpp/2297/${targetDate}`;
+        await page.goto(dayUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        console.log(`⏳ Waiting for summary list...`);
+        await new Promise(r => setTimeout(r, 5000));
 
-        console.log("🔍 Extracting orders from Detail View...");
-        const results = await page.evaluate(() => {
-            const bodyText = document.body.innerText;
+        // 1. Click the row to expand Morning/Afternoon cards
+        await page.evaluate((date) => {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const d = new Date(date + 'T12:00:00');
+            const matchStr = `${months[d.getMonth()]} ${d.getDate()}`;
             
-            // 1. Find all times - more relaxed to catch hidden characters
-            const timeRegex = /(\d{1,2}:\d{2})\s*[A|P]M/gi;
-            const times = Array.from(bodyText.matchAll(timeRegex)).map(m => ({
-                index: m.index,
-                time: m[0]
-            }));
-
-            // 2. Find all groups
-            const extracted = [];
-            const groupRegex = /Group\s+([A-Z0-9]+)\s+.+?\s+([^\n$]+)/gi;
-            let m;
-            while ((m = groupRegex.exec(bodyText)) !== null) {
-                const code = m[1].replace('FORK-', '').trim();
-                const company = m[2].trim();
-                
-                // Find nearest time BEFORE this group
-                let pickupTime = "undefined";
-                for (let t = times.length - 1; t >= 0; t--) {
-                    if (times[t].index < m.index) {
-                        pickupTime = times[t].time;
-                        break;
-                    }
-                }
-
-                const segment = bodyText.substring(m.index, m.index + 8000);
-                const segmentLines = segment.split('\n').map(l => l.trim()).filter(l => l);
-                
-                const items = [];
-                let subtotal = 0;
-                let pIdx = 0;
-                let pendingNotes = [];
-                for (let i = 0; i < segmentLines.length; i++) {
-                    if (segmentLines[i].match(/^\$\d+\.\d{2}$/)) {
-                        const price = parseFloat(segmentLines[i].replace('$', ''));
-                        subtotal += price;
-
-                        let block = segmentLines.slice(pIdx + 1, i).map(l => l.trim()).filter(l => l);
-                        
-                        // Skip summary lines like "10 items", "1 item" or just "10"
-                        while (block.length > 0 && (block[0].match(/^\d+$/) || block[0].toLowerCase().includes(' item') || block[0].includes('Group '))) {
-                            block.shift();
-                        }
-                        
-                        if (block.length >= 1) {
-                            const firstLine = block[0].trim();
-                            const isSideOrNote = firstLine.includes('»') || firstLine.toLowerCase().includes('add side') || firstLine.toLowerCase().includes('please') || firstLine.toLowerCase().includes('no ');
-                            
-                            // Improved name check: 2-4 words, no numbers, handles all whitespace
-                            const words = firstLine.split(/\s+/).filter(w => w.length > 0);
-                            const isName = !isSideOrNote && words.length >= 2 && words.length <= 4 && !/\d/.test(firstLine);
-                            
-                            let rawDish = "";
-                            let extraNotes = "";
-                            if (isName && block.length >= 2) {
-                                rawDish = block[1].replace('»', '').trim();
-                                extraNotes = block.slice(2).map(n => n.replace('»', '').trim()).join(' | ');
-                            } else {
-                                rawDish = firstLine.replace('»', '').trim();
-                                extraNotes = block.slice(1).map(n => n.replace('»', '').trim()).join(' | ');
-                            }
-                            rawDish = rawDish.replace(/^\d+x\s+/, '').trim();
-                            if (isSideOrNote) {
-                                const sideText = extraNotes ? `${rawDish} (${extraNotes})` : rawDish;
-                                if (items.length > 0) {
-                                    const last = items[items.length - 1];
-                                    last.notes = last.notes ? `${last.notes} | ${sideText}` : sideText;
-                                } else {
-                                    pendingNotes.push(sideText);
-                                }
-                            } else if (rawDish) {
-                                let combinedNotes = extraNotes;
-                                if (pendingNotes.length > 0) {
-                                    combinedNotes = pendingNotes.join(' | ') + (combinedNotes ? ` | ${combinedNotes}` : '');
-                                    pendingNotes = [];
-                                }
-                                items.push({ name: rawDish, price, notes: combinedNotes });
-                            }
-                        }
-                        pIdx = i;
-                    }
-                    if (i > 0 && segmentLines[i].includes('Group ') && segmentLines[i].includes(' - ')) break;
-                }
-                if (items.length > 0) extracted.push({ code, company, items, pickupTime, subtotal });
+            const rows = Array.from(document.querySelectorAll('.pickup-day'));
+            const targetRow = rows.find(r => r.innerText.includes(matchStr) || r.innerText.toLowerCase().includes('today'));
+            
+            if (targetRow) {
+                const clickable = targetRow.querySelector('.cursor-pointer') || targetRow.querySelector('span.text-blue') || targetRow;
+                clickable.click();
             }
-            return { extracted };
+        }, targetDate);
+
+        console.log(`⏳ Waiting for AM/PM cards to render...`);
+        await new Promise(r => setTimeout(r, 10000));
+
+        // 2. Find all "View Order" links
+        const sessionUrls = await page.evaluate(() => {
+            const allElements = Array.from(document.querySelectorAll('a, button, div, span'));
+            const buttons = allElements.filter(el => {
+                const text = el.innerText || "";
+                return text.toLowerCase().includes('view order') && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.classList.contains('btn'));
+            });
+            
+            return buttons.map(b => {
+                if (b.tagName === 'A') return b.href;
+                const parentA = b.closest('a');
+                return parentA ? parentA.href : null;
+            }).filter(href => href && href.includes('/fpp/'));
         });
 
-        const extractedData = results.extracted;
+        // Unique URLs only
+        const uniqueSessionUrls = [...new Set(sessionUrls)];
+        console.log(`🔍 Found ${uniqueSessionUrls.length} unique pickup sessions.`);
+        
+        const allExtractedData = [];
+
+        for (const url of uniqueSessionUrls) {
+            console.log(`🚀 Scraping session: ${url}`);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+            await new Promise(r => setTimeout(r, 8000));
+
+            const results = await page.evaluate(() => {
+                const bodyText = document.body.innerText;
+                const timeRegex = /(\d{1,2}:\d{2})\s*[A|P]M/gi;
+                const times = Array.from(bodyText.matchAll(timeRegex)).map(m => ({
+                    index: m.index,
+                    time: m[0]
+                }));
+
+                const extracted = [];
+                const groupRegex = /Group\s+([A-Z0-9]+)\s+.+?\s+([^\n$]+)/gi;
+                let m;
+                while ((m = groupRegex.exec(bodyText)) !== null) {
+                    const code = m[1].replace('FORK-', '').trim();
+                    const company = m[2].trim();
+                    
+                    let pickupTime = "undefined";
+                    for (let t = times.length - 1; t >= 0; t--) {
+                        if (times[t].index < m.index) {
+                            pickupTime = times[t].time;
+                            break;
+                        }
+                    }
+
+                    const segment = bodyText.substring(m.index, m.index + 8000);
+                    const segmentLines = segment.split('\n').map(l => l.trim()).filter(l => l);
+                    
+                    const items = [];
+                    let subtotal = 0;
+                    let pIdx = -1;
+                    let pendingNotes = [];
+                    for (let i = 0; i < segmentLines.length; i++) {
+                        if (segmentLines[i].match(/^\$\d+\.\d{2}$/)) {
+                            const price = parseFloat(segmentLines[i].replace('$', ''));
+                            subtotal += price;
+
+                            let block = segmentLines.slice(pIdx + 1, i).map(l => l.trim()).filter(l => l);
+                            
+                            // Skip summary lines like "10 items", "1 item" or just "10"
+                            while (block.length > 0 && (block[0].match(/^\d+$/) || block[0].toLowerCase().includes(' item') || block[0].toLowerCase().includes('group '))) {
+                                block.shift();
+                            }
+                            
+                            if (block.length >= 1) {
+                                // Identify which lines are sides/notes and which are dish/name info
+                                const sideMarker = (l) => l.includes('»') || l.toLowerCase().includes('add side') || l.toLowerCase().includes('please') || l.toLowerCase().includes('no ');
+                                
+                                let dishLines = [];
+                                let currentBlockSides = [];
+                                
+                                // If the block starts with a side note, it likely belongs to the PREVIOUS item (pushed down by price)
+                                while (block.length > 0 && sideMarker(block[0])) {
+                                    const side = block.shift().replace('»', '').trim();
+                                    if (items.length > 0) {
+                                        const last = items[items.length - 1];
+                                        last.notes = last.notes ? `${last.notes} | ${side}` : side;
+                                    } else {
+                                        pendingNotes.push(side);
+                                    }
+                                }
+                                
+                                // The remaining lines are the Name, Dish, and any trailing sides
+                                for (const line of block) {
+                                    if (sideMarker(line)) {
+                                        currentBlockSides.push(line.replace('»', '').trim());
+                                    } else {
+                                        dishLines.push(line);
+                                    }
+                                }
+                                
+                                if (dishLines.length >= 1) {
+                                    const firstLine = dishLines[0];
+                                    const words = firstLine.split(/\s+/).filter(w => w.length > 0);
+                                    const isName = words.length >= 2 && words.length <= 4 && !/\d/.test(firstLine);
+                                    
+                                    let rawDish = "";
+                                    let dishNotes = currentBlockSides.join(' | ');
+                                    
+                                    if (isName && dishLines.length >= 2) {
+                                        rawDish = dishLines[1];
+                                        const extra = dishLines.slice(2).join(' | ');
+                                        if (extra) dishNotes = dishNotes ? `${dishNotes} | ${extra}` : extra;
+                                    } else {
+                                        rawDish = firstLine;
+                                        const extra = dishLines.slice(1).join(' | ');
+                                        if (extra) dishNotes = dishNotes ? `${dishNotes} | ${extra}` : extra;
+                                    }
+                                    
+                                    rawDish = rawDish.replace(/^\d+x\s+/, '').trim();
+                                    if (rawDish) {
+                                        if (pendingNotes.length > 0) {
+                                            dishNotes = pendingNotes.join(' | ') + (dishNotes ? ` | ${dishNotes}` : '');
+                                            pendingNotes = [];
+                                        }
+                                        items.push({ name: rawDish, price, notes: dishNotes });
+                                    }
+                                }
+                            }
+                            pIdx = i;
+                        }
+                        if (i > 0 && segmentLines[i].toLowerCase().includes('group ') && segmentLines[i].includes(' - ')) break;
+                    }
+                    if (items.length > 0) extracted.push({ code, company, items, pickupTime, subtotal });
+                }
+                return extracted;
+            });
+            allExtractedData.push(...results);
+        }
+
+        const extractedData = allExtractedData;
         const totalItems = extractedData.reduce((acc, o) => acc + o.items.length, 0);
         
         console.log(`✨ Extracted ${extractedData.length} groups, Total Dishes: ${totalItems}`);
