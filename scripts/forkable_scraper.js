@@ -1,5 +1,4 @@
 import puppeteer from 'puppeteer';
-import fs from 'fs';
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
 import * as dotenv from 'dotenv';
@@ -33,8 +32,17 @@ const FORKABLE_PASS = "Supassorn_2493";
         await page.keyboard.press('Enter');
         await new Promise(r => setTimeout(r, 8000));
 
-        const targetDate = '2026-04-27';
-        console.log(`📡 Accessing Dashboard for ${targetDate}...`);
+        // --- DYNAMIC DATE HANDLING ---
+        // Allow passing a date as an argument: node scripts/forkable_scraper.js 2026-04-29
+        let targetDate = process.argv[2]; 
+        if (!targetDate) {
+            const today = new Date();
+            targetDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        }
+        
+        console.log(`📡 Accessing Dashboard for date: ${targetDate}...`);
+        
+        // Use the dynamic targetDate in the URL
         const directUrl = `https://forkable.com/fpp/2297/${targetDate}/17201/958145,956765,960057,957695`;
         await page.goto(directUrl, { waitUntil: 'networkidle2', timeout: 60000 });
         
@@ -74,10 +82,14 @@ const FORKABLE_PASS = "Supassorn_2493";
                 const segmentLines = segment.split('\n').map(l => l.trim()).filter(l => l);
                 
                 const items = [];
+                let subtotal = 0;
                 let pIdx = 0;
                 let pendingNotes = [];
                 for (let i = 0; i < segmentLines.length; i++) {
                     if (segmentLines[i].match(/^\$\d+\.\d{2}$/)) {
+                        const price = parseFloat(segmentLines[i].replace('$', ''));
+                        subtotal += price;
+
                         let block = segmentLines.slice(pIdx + 1, i).map(l => l.trim()).filter(l => l);
                         
                         // Skip summary lines like "10 items", "1 item" or just "10"
@@ -117,22 +129,21 @@ const FORKABLE_PASS = "Supassorn_2493";
                                     combinedNotes = pendingNotes.join(' | ') + (combinedNotes ? ` | ${combinedNotes}` : '');
                                     pendingNotes = [];
                                 }
-                                items.push({ name: rawDish, notes: combinedNotes });
+                                items.push({ name: rawDish, price, notes: combinedNotes });
                             }
                         }
                         pIdx = i;
                     }
                     if (i > 0 && segmentLines[i].includes('Group ') && segmentLines[i].includes(' - ')) break;
                 }
-                if (items.length > 0) extracted.push({ code, company, items, pickupTime });
+                if (items.length > 0) extracted.push({ code, company, items, pickupTime, subtotal });
             }
-            return { extracted, timesCount: times.length };
+            return { extracted };
         });
 
         const extractedData = results.extracted;
         const totalItems = extractedData.reduce((acc, o) => acc + o.items.length, 0);
         
-        console.log(`⏱️  Diagnostic: Found ${results.timesCount} timestamps on the page.`);
         console.log(`✨ Extracted ${extractedData.length} groups, Total Dishes: ${totalItems}`);
         
         for (const o of extractedData) {
@@ -163,7 +174,11 @@ const FORKABLE_PASS = "Supassorn_2493";
                 }
 
                 const id = `${o.code}-${targetDate}`;
-                console.log(`   📤 Uploading ${id} with ${aggregatedItems.length} items...`);
+                const subtotal = o.subtotal || 0;
+                const total = subtotal;
+                const netPayout = total * 0.75; // 25% commission deduction
+
+                console.log(`   📤 Uploading ${id} with ${aggregatedItems.length} items (Subtotal: $${subtotal.toFixed(2)})...`);
                 await setDoc(doc(db, 'orders', id), {
                     id, 
                     platform: "Forkable", 
@@ -171,6 +186,9 @@ const FORKABLE_PASS = "Supassorn_2493";
                     deliveryDate: targetDate, 
                     pickupTime: o.pickupTime, 
                     pickUpTime: o.pickupTime,
+                    subtotal: parseFloat(subtotal.toFixed(2)),
+                    total: parseFloat(total.toFixed(2)),
+                    netPayout: parseFloat(netPayout.toFixed(2)),
                     isDeleted: false, 
                     status: "New", 
                     typeOfOrder: "Meal Manager",
