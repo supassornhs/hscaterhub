@@ -47,46 +47,51 @@ const FORKABLE_PASS = "Supassorn_2493";
         console.log(`⏳ Waiting for summary list...`);
         await new Promise(r => setTimeout(r, 5000));
 
-        // 1. Click the row to expand Morning/Afternoon cards
-        await page.evaluate((date) => {
+        // 1. Surgical discovery using DOM boundaries
+        const uniqueSessionUrls = await page.evaluate(async (date) => {
             const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             const d = new Date(date + 'T12:00:00');
             const matchStr = `${months[d.getMonth()]} ${d.getDate()}`;
             
             const rows = Array.from(document.querySelectorAll('.pickup-day'));
-            const targetRow = rows.find(r => r.innerText.includes(matchStr) || r.innerText.toLowerCase().includes('today'));
+            const targetIdx = rows.findIndex(r => r.innerText.includes(matchStr) || r.innerText.toLowerCase().includes('today'));
+            if (targetIdx === -1) return [];
             
-            if (targetRow) {
-                const clickable = targetRow.querySelector('.cursor-pointer') || targetRow.querySelector('span.text-blue') || targetRow;
-                clickable.click();
-            }
-        }, targetDate);
-
-        console.log(`⏳ Waiting for AM/PM cards to render...`);
-        await new Promise(r => setTimeout(r, 10000));
-
-        // 2. Find all "View Order" links
-        const sessionUrls = await page.evaluate(() => {
-            const allElements = Array.from(document.querySelectorAll('a, button, div, span'));
-            const buttons = allElements.filter(el => {
-                const text = el.innerText || "";
-                return text.toLowerCase().includes('view order') && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.classList.contains('btn'));
+            const targetRow = rows[targetIdx];
+            const nextRow = rows[targetIdx + 1] || null;
+            
+            // Expand it first
+            const clickable = targetRow.querySelector('.cursor-pointer') || targetRow.querySelector('span.text-blue') || targetRow;
+            clickable.click();
+            await new Promise(r => setTimeout(r, 8000));
+            
+            // Collect all "View Order" links that are after targetRow but before nextRow
+            const allLinks = Array.from(document.querySelectorAll('a, button, .btn'))
+                .filter(el => (el.innerText || "").toLowerCase().includes('view order'));
+                
+            const validLinks = allLinks.filter(el => {
+                const posTarget = targetRow.compareDocumentPosition(el);
+                const isAfterTarget = (posTarget & Node.DOCUMENT_POSITION_FOLLOWING);
+                
+                if (!isAfterTarget) return false;
+                
+                if (nextRow) {
+                    const posNext = nextRow.compareDocumentPosition(el);
+                    const isBeforeNext = (posNext & Node.DOCUMENT_POSITION_PRECEDING);
+                    return isBeforeNext;
+                }
+                return true;
             });
             
-            return buttons.map(b => {
-                if (b.tagName === 'A') return b.href;
-                const parentA = b.closest('a');
-                return parentA ? parentA.href : null;
-            }).filter(href => href && href.includes('/fpp/'));
-        });
+            return validLinks.map(el => (el.tagName === 'A' ? el.href : (el.closest('a') ? el.closest('a').href : null)))
+                .filter(href => href && href.includes('/fpp/'));
+        }, targetDate);
 
-        // Unique URLs only
-        const uniqueSessionUrls = [...new Set(sessionUrls)];
-        console.log(`🔍 Found ${uniqueSessionUrls.length} unique pickup sessions.`);
+        const sessionUrls = [...new Set(uniqueSessionUrls)];
+        console.log(`🔍 Found ${sessionUrls.length} pickup sessions for ${targetDate}.`);
         
         const allExtractedData = [];
-
-        for (const url of uniqueSessionUrls) {
+        for (const url of sessionUrls) {
             console.log(`🚀 Scraping session: ${url}`);
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
             await new Promise(r => setTimeout(r, 8000));
