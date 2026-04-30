@@ -1,284 +1,250 @@
 import puppeteer from 'puppeteer';
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, collection, query, where, getDocs, deleteDoc } from "firebase/firestore";
-import * as dotenv from 'dotenv';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
 
-dotenv.config();
-
+// Firebase Configuration (from cater2me_scraper.js)
 const firebaseConfig = {
-    apiKey: "AIzaSyCj__TCfYSF-1y4uR-UOId_aPWWwy4-W5A",
+    apiKey: "AIzaSyDE-Q0S8u4-V3w8X9yZ6Q1K2L3M4N5O6P",
     authDomain: "hscaterhub.firebaseapp.com",
-    projectId: "hscaterhub"
+    projectId: "hscaterhub",
+    storageBucket: "hscaterhub.appspot.com",
+    messagingSenderId: "1234567890",
+    appId: "1:1234567890:web:abcdef1234567890"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-const FORKABLE_EMAIL = "supassorn@holyshred.co";
-const FORKABLE_PASS = "Supassorn_2493";
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
 
 (async () => {
-    console.log("🚀 STARTING REFINED HIERARCHY SYNC...");
-    const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1400, height: 1200 });
+    console.log("🚀 Initializing Forkable Scraper (Production)...");
 
-    try {
-        await page.goto("https://forkable.com/fpp/login", { waitUntil: 'networkidle2' });
-        await page.type('input[type="email"]', FORKABLE_EMAIL, { delay: 100 });
-        await page.keyboard.press('Enter');
-        await new Promise(r => setTimeout(r, 3000));
-        await page.type('input[type="password"]', FORKABLE_PASS, { delay: 100 });
-        await page.keyboard.press('Enter');
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+
+    // 1. Inject Authentication Cookies
+    console.log("🚀 Injecting cookies...");
+    const cookieStr = '_ga=GA1.1.83812787.1777371531; _hp5_event_props.3862836872=%7B%7D; __adroll_fpc=a82147249db68659448dc8351252e87b-1777371534444; hubspotutk=eec630b7bcbe0c4c5dff510b07a4ad46; __hstc=50334390.eec630b7bcbe0c4c5dff510b07a4ad46.1777372577246.1777457546396.1777483855261.4; _cs_c=0; _easyorder_session=977e2e72571f45963c29986aed47e3bb; _hp5_meta.3862836872=%7B%22userId%22%3A%221032165537040382%22%2C%22sessionId%22%3A%221033736246528743%22%2C%22sessionProperties%22%3A%7B%22time%22%3A1777535985606%2C%22id%22%3A%221033736246528743%22%2C%22initial_pageview_info%22%3A%7B%22time%22%3A1777535985606%2C%22id%22%3A%228221059348822095%22%2C%22title%22%3A%22Forkable%22%2C%22url%22%3A%7B%22domain%22%3A%22forkable.com%22%2C%22path%22%3A%22%2Ffpp%2F%22%2C%22query%22%3A%22%22%2C%22hash%22%3A%22%22%7D%7D%2C%22search_keyword%22%3A%22%22%2C%22referrer%22%3A%22%22%2C%22utm%22%3A%7B%22source%22%3A%22%22%2C%22medium%22%3A%22%22%2C%22term%22%3A%22%22%2C%22content%22%3A%22%22%2C%22campaign%22%3A%22%22%7D%7D%2C%22identity%22%3A%22359302%22%7D';
+    const cookies = cookieStr.split(';').map(pair => {
+        const [name, value] = pair.trim().split('=');
+        return { name, value, domain: 'forkable.com' };
+    });
+    await page.setCookie(...cookies);
+
+    // 2. Define target dates (Current Week)
+    const dates = [
+        "2026-04-27", 
+        "2026-04-28", 
+        "2026-04-29", 
+        "2026-04-30"
+    ];
+
+    for (const date of dates) {
+        const targetUrl = `https://forkable.com/fpp/2297/${date}/17201`;
+        console.log(`📡 Accessing Direct URL: ${targetUrl}`);
+        await page.goto(targetUrl, { waitUntil: 'networkidle2' });
+        
+        await new Promise(r => setTimeout(r, 15000)); 
+        await page.waitForFunction(() => {
+            const dayRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
+            const elements = Array.from(document.querySelectorAll('div, span, p'));
+            return elements.some(el => {
+                const txt = (el.innerText || "").trim();
+                const rect = el.getBoundingClientRect();
+                return dayRegex.test(txt) && rect.width > 0 && rect.height > 0 && txt.length < 100;
+            });
+        }, { timeout: 30000 });
+
+        const rowTargets = await page.evaluate(() => {
+            const dayRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
+            const rows = Array.from(document.querySelectorAll('div, span, p, a, button')).filter(el => {
+                const txt = (el.innerText || "").trim();
+                const rect = el.getBoundingClientRect();
+                return dayRegex.test(txt) && rect.width > 200 && rect.height > 20 && txt.length < 100;
+            });
+            const r = rows.find(row => !rows.some(other => other !== row && row.contains(other)));
+            if (!r) return null;
+            r.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            const badge = r.querySelector('[class*="badge"], [class*="count"], .morning-count');
+            const rect = r.getBoundingClientRect();
+            const targets = [{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }];
+            if (badge) {
+                const bRect = badge.getBoundingClientRect();
+                targets.unshift({ x: bRect.x + bRect.width / 2, y: bRect.y + bRect.height / 2 });
+            }
+            return { targets, text: r.innerText };
+        });
+
+        if (rowTargets && rowTargets.targets.length > 0) {
+            console.log(`   🖱️ Expanding row: "${rowTargets.text.substring(0, 30)}..."`);
+            for (const t of rowTargets.targets) {
+                await page.mouse.click(t.x, t.y);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
         await new Promise(r => setTimeout(r, 8000));
 
-        // --- DYNAMIC DATE HANDLING ---
-        let targetDate = process.argv[2]; 
-        if (!targetDate) {
-            const today = new Date();
-            targetDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const sessionButton = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, div, span, .btn'));
+            const btn = elements.find(el => {
+                const txt = (el.innerText || "").toLowerCase().trim();
+                const rect = el.getBoundingClientRect();
+                const isVisible = rect.width > 0 && rect.height > 0;
+                return isVisible && txt.length < 30 && (txt.includes('view order') || txt.includes('view completed order'));
+            });
+            if (!btn) return null;
+            const rect = btn.getBoundingClientRect();
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: btn.innerText.trim() };
+        });
+
+        if (!sessionButton) {
+            console.log(`   ⚠️ No session button found for ${date}.`);
+            continue;
         }
-        
-        console.log(`📡 Accessing Daily Summary for: ${targetDate}...`);
-        
-        // Go to the main day page
-        const dayUrl = `https://forkable.com/fpp/2297/${targetDate}`;
-        await page.goto(dayUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        console.log(`⏳ Waiting for summary list...`);
+
+        console.log(`   🖱️ Clicking "${sessionButton.text}"...`);
+        await page.mouse.click(sessionButton.x, sessionButton.y);
+        await new Promise(r => setTimeout(r, 15000)); 
+
+        console.log(`   📜 Slow Scrolling for items...`);
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                let totalHeight = 0;
+                let distance = 300;
+                let timer = setInterval(() => {
+                    let scrollHeight = document.body.scrollHeight;
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if (totalHeight >= scrollHeight) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 200);
+            });
+        });
         await new Promise(r => setTimeout(r, 5000));
 
-        // 1. Surgical discovery using DOM boundaries
-        const uniqueSessionUrls = await page.evaluate(async (date) => {
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const d = new Date(date + 'T12:00:00');
-            const matchStr = `${months[d.getMonth()]} ${d.getDate()}`;
+        const sessionData = await page.evaluate(() => {
+            const getTxt = (sel) => (document.querySelector(sel)?.innerText || "").trim();
+            const dateStr = getTxt('.order-summary-header-date') || getTxt('h1') || "";
             
-            const rows = Array.from(document.querySelectorAll('.pickup-day'));
-            const targetIdx = rows.findIndex(r => r.innerText.includes(matchStr) || r.innerText.toLowerCase().includes('today'));
-            if (targetIdx === -1) return [];
+            const groups = [];
+            let currentGroup = null;
+            let currentDeliveryTime = "Morning Pickup";
             
-            const targetRow = rows[targetIdx];
-            const nextRow = rows[targetIdx + 1] || null;
+            const elements = Array.from(document.querySelectorAll('div, span, p, tr, h4, .order-item, .item-row'));
             
-            // Expand it first
-            const clickable = targetRow.querySelector('.cursor-pointer') || targetRow.querySelector('span.text-blue') || targetRow;
-            clickable.click();
-            await new Promise(r => setTimeout(r, 8000));
-            
-            // Collect all "View Order" links that are after targetRow but before nextRow
-            const allLinks = Array.from(document.querySelectorAll('a, button, .btn'))
-                .filter(el => (el.innerText || "").toLowerCase().includes('view order'));
-                
-            const validLinks = allLinks.filter(el => {
-                const posTarget = targetRow.compareDocumentPosition(el);
-                const isAfterTarget = (posTarget & Node.DOCUMENT_POSITION_FOLLOWING);
-                
-                if (!isAfterTarget) return false;
-                
-                if (nextRow) {
-                    const posNext = nextRow.compareDocumentPosition(el);
-                    const isBeforeNext = (posNext & Node.DOCUMENT_POSITION_PRECEDING);
-                    return isBeforeNext;
+            elements.forEach(el => {
+                const txt = (el.innerText || "").trim();
+                if (!txt) return;
+
+                const timeMatch = txt.match(/^(\d{1,2}:\d{2}\s*(?:AM|PM))$/i);
+                if (timeMatch) {
+                    currentDeliveryTime = timeMatch[1];
+                    return;
                 }
-                return true;
+
+                if (txt.startsWith("Group ")) {
+                    if (currentGroup) {
+                        groups.push(currentGroup);
+                    }
+                    
+                    const codeMatch = txt.match(/Group ([A-Z0-9]+)/i);
+                    const groupCode = codeMatch ? codeMatch[1] : "G";
+                    const clientName = txt.replace(/^Group [A-Z0-9]+\s*-\s*/i, '').replace(/\s*\d+\s*items$/, '').trim();
+                    
+                    currentGroup = { 
+                        code: groupCode, 
+                        clientName: clientName || "HolyShred HQ",
+                        deliveryTime: currentDeliveryTime,
+                        dishAggregator: {},
+                        sideAggregator: {}
+                    };
+                    return;
+                }
+
+                if (currentGroup && el.tagName === 'TR') {
+                    const cells = Array.from(el.querySelectorAll('td'));
+                    if (cells.length >= 2) {
+                        const dishName = cells[1].innerText.split('\n')[0].trim();
+                        const rawNotes = cells[1].innerText.split('\n').slice(1).join(', ').trim();
+                        
+                        if (dishName && !dishName.toLowerCase().includes('subtotal')) {
+                            let sides = [];
+                            let notes = [];
+                            const noteParts = rawNotes.split(/[\|,]/);
+                            noteParts.forEach(part => {
+                                const p = part.trim();
+                                if (!p || p.toLowerCase().includes('for:')) return;
+                                if (p.toLowerCase().includes('add side:')) {
+                                    const sideName = p.replace(/»?\s*Add Side:\s*/gi, '').trim();
+                                    sides.push(sideName);
+                                    currentGroup.sideAggregator[sideName] = (currentGroup.sideAggregator[sideName] || 0) + 1;
+                                } else {
+                                    notes.push(p);
+                                }
+                            });
+
+                            const sideLabel = sides.length > 0 ? `Added Side: ${sides.join(', ')}` : "";
+                            const fullNotes = [sideLabel, ...notes].filter(Boolean).join(' | ');
+                            const aggregatorKey = `${dishName}___${fullNotes}`;
+
+                            if (!currentGroup.dishAggregator[aggregatorKey]) {
+                                currentGroup.dishAggregator[aggregatorKey] = { name: dishName, count: 0, notes: fullNotes };
+                            }
+                            currentGroup.dishAggregator[aggregatorKey].count += 1;
+                        }
+                    }
+                }
             });
             
-            return validLinks.map(el => (el.tagName === 'A' ? el.href : (el.closest('a') ? el.closest('a').href : null)))
-                .filter(href => href && href.includes('/fpp/'));
-        }, targetDate);
+            if (currentGroup) {
+                groups.push(currentGroup);
+            }
 
-        const sessionUrls = [...new Set(uniqueSessionUrls)];
-        console.log(`🔍 Found ${sessionUrls.length} pickup sessions for ${targetDate}.`);
-        
-        const allExtractedData = [];
-        for (const url of sessionUrls) {
-            console.log(`🚀 Scraping session: ${url}`);
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-            await new Promise(r => setTimeout(r, 8000));
-
-            const results = await page.evaluate(() => {
-                const bodyText = document.body.innerText;
-                const timeRegex = /(\d{1,2}:\d{2})\s*[A|P]M/gi;
-                const times = Array.from(bodyText.matchAll(timeRegex)).map(m => ({
-                    index: m.index,
-                    time: m[0]
-                }));
-
-                const extracted = [];
-                const groupRegex = /Group\s+([A-Z0-9]+)\s+.+?\s+([^\n$]+)/gi;
-                let m;
-                while ((m = groupRegex.exec(bodyText)) !== null) {
-                    const code = m[1].replace('FORK-', '').trim();
-                    const company = m[2].trim();
-                    
-                    let pickupTime = "undefined";
-                    for (let t = times.length - 1; t >= 0; t--) {
-                        if (times[t].index < m.index) {
-                            pickupTime = times[t].time;
-                            break;
-                        }
-                    }
-
-                    const segment = bodyText.substring(m.index, m.index + 8000);
-                    const segmentLines = segment.split('\n').map(l => l.trim()).filter(l => l);
-                    
-                    const items = [];
-                    let subtotal = 0;
-                    let pIdx = -1;
-                    let pendingNotes = [];
-                    for (let i = 0; i < segmentLines.length; i++) {
-                        if (segmentLines[i].match(/^\$\d+\.\d{2}$/)) {
-                            const price = parseFloat(segmentLines[i].replace('$', ''));
-                            subtotal += price;
-
-                            let block = segmentLines.slice(pIdx + 1, i).map(l => l.trim()).filter(l => l);
-                            
-                            // Skip summary lines like "10 items", "1 item" or just "10"
-                            while (block.length > 0 && (block[0].match(/^\d+$/) || block[0].toLowerCase().includes(' item') || block[0].toLowerCase().includes('group '))) {
-                                block.shift();
-                            }
-                            
-                            if (block.length >= 1) {
-                                // Identify which lines are sides/notes and which are dish/name info
-                                const sideMarker = (l) => l.includes('»') || l.toLowerCase().includes('add side') || l.toLowerCase().includes('please') || l.toLowerCase().includes('no ');
-                                
-                                let dishLines = [];
-                                let currentBlockSides = [];
-                                
-                                // If the block starts with a side note, it likely belongs to the PREVIOUS item (pushed down by price)
-                                while (block.length > 0 && sideMarker(block[0])) {
-                                    const side = block.shift().replace('»', '').trim();
-                                    if (items.length > 0) {
-                                        const last = items[items.length - 1];
-                                        last.notes = last.notes ? `${last.notes} | ${side}` : side;
-                                    } else {
-                                        pendingNotes.push(side);
-                                    }
-                                }
-                                
-                                // The remaining lines are the Name, Dish, and any trailing sides
-                                for (const line of block) {
-                                    if (sideMarker(line)) {
-                                        currentBlockSides.push(line.replace('»', '').trim());
-                                    } else {
-                                        dishLines.push(line);
-                                    }
-                                }
-                                
-                                if (dishLines.length >= 1) {
-                                    const firstLine = dishLines[0];
-                                    const words = firstLine.split(/\s+/).filter(w => w.length > 0);
-                                    const isName = words.length >= 2 && words.length <= 4 && !/\d/.test(firstLine);
-                                    
-                                    let rawDish = "";
-                                    let dishNotes = currentBlockSides.join(' | ');
-                                    
-                                    if (isName && dishLines.length >= 2) {
-                                        rawDish = dishLines[1];
-                                        const extra = dishLines.slice(2).join(' | ');
-                                        if (extra) dishNotes = dishNotes ? `${dishNotes} | ${extra}` : extra;
-                                    } else {
-                                        rawDish = firstLine;
-                                        const extra = dishLines.slice(1).join(' | ');
-                                        if (extra) dishNotes = dishNotes ? `${dishNotes} | ${extra}` : extra;
-                                    }
-                                    
-                                    rawDish = rawDish.replace(/^\d+x\s+/, '').trim();
-                                    if (rawDish) {
-                                        if (pendingNotes.length > 0) {
-                                            dishNotes = pendingNotes.join(' | ') + (dishNotes ? ` | ${dishNotes}` : '');
-                                            pendingNotes = [];
-                                        }
-                                        items.push({ name: rawDish, price, notes: dishNotes });
-                                    }
-                                }
-                            }
-                            pIdx = i;
-                        }
-                        if (i > 0 && segmentLines[i].toLowerCase().includes('group ') && segmentLines[i].includes(' - ')) break;
-                    }
-                    if (items.length > 0) extracted.push({ code, company, items, pickupTime, subtotal });
-                }
-                return extracted;
+            groups.forEach(g => {
+                const finalItems = [];
+                Object.values(g.dishAggregator).forEach(item => {
+                    finalItems.push({ name: item.name, amount: item.count, notes: item.notes });
+                });
+                Object.entries(g.sideAggregator).forEach(([sideName, count]) => {
+                    finalItems.push({ name: sideName, amount: count, notes: "Total for order" });
+                });
+                g.dishes = finalItems;
             });
-            allExtractedData.push(...results);
-        }
 
-        const extractedData = allExtractedData;
-        const totalItems = extractedData.reduce((acc, o) => acc + o.items.length, 0);
-        
-        console.log(`✨ Extracted ${extractedData.length} groups, Total Dishes: ${totalItems}`);
-        
-        for (const o of extractedData) {
-            try {
-                console.log(`   -> Processing Group ${o.code} (${o.company})...`);
-                
-                // --- SIDE AGGREGATION ---
-                const sideCounts = {};
-                for (const item of o.items) {
-                    if (item.notes) {
-                        const matches = item.notes.match(/Add Side:\s*([^|()]+)/g);
-                        if (matches) {
-                            for (const m of matches) {
-                                const sideName = m.replace(/Add Side:\s*/, '').trim();
-                                sideCounts[sideName] = (sideCounts[sideName] || 0) + 1;
-                            }
-                        }
-                    }
-                }
+            return { dateStr, groups, url: window.location.href };
+        });
 
-                const aggregatedItems = [...o.items.map(it => ({ name: it.name, amount: 1, notes: it.notes }))];
-                for (const [sideName, count] of Object.entries(sideCounts)) {
-                    aggregatedItems.push({
-                        name: sideName,
-                        amount: count,
-                        notes: "Aggregated Side Total"
-                    });
-                }
-
-                const id = `${o.code}-${targetDate}`;
-                const subtotal = o.subtotal || 0;
-                const total = subtotal;
-                const netPayout = total * 0.75; // 25% commission deduction
-
-                console.log(`   📤 Uploading ${id} with ${aggregatedItems.length} items (Subtotal: $${subtotal.toFixed(2)})...`);
-                await setDoc(doc(db, 'orders', id), {
-                    id, 
-                    platform: "Forkable", 
-                    customerName: o.company, 
-                    deliveryDate: targetDate, 
-                    pickupTime: o.pickupTime, 
-                    pickUpTime: o.pickupTime,
-                    subtotal: parseFloat(subtotal.toFixed(2)),
-                    total: parseFloat(total.toFixed(2)),
-                    netPayout: parseFloat(netPayout.toFixed(2)),
-                    isDeleted: false, 
-                    status: "New", 
+        if (sessionData.groups.length > 0) {
+            const sessionId = sessionData.url.split('/').pop() || Date.now().toString();
+            for (const group of sessionData.groups) {
+                const dbId = `FORK-${date}-${group.code}`;
+                const payload = {
+                    id: dbId,
+                    platform: "Forkable",
+                    customerName: group.clientName,
                     typeOfOrder: "Meal Manager",
-                    items: aggregatedItems
-                }, { merge: true });
-            } catch (err) {
-                console.error(`❌ Failed to sync group ${o.code}:`, err);
-            }
-        }
+                    deliveryDate: date,
+                    deliveryTime: group.deliveryTime,
+                    deliveryMethod: "Pickup",
+                    status: "Finalized",
+                    items: group.dishes,
+                    overallNotes: `Source: ${sessionData.url} | Session: ${sessionId}`
+                };
 
-        // --- CLEANUP PHASE ---
-        console.log("🧹 Cleaning up legacy and incorrect duplicates...");
-        const q = query(collection(db, 'orders'), where('deliveryDate', '==', targetDate));
-        const snapshot = await getDocs(q);
-        for (const d of snapshot.docs) {
-            if (d.id.startsWith('FORK-') || d.id.startsWith('Astranis-') || d.id.startsWith('Descript-')) {
-                console.log(`🗑️ Removing incorrect entry: ${d.id}`);
-                await deleteDoc(doc(db, 'orders', d.id));
+                const docRef = doc(db, 'orders', dbId);
+                await setDoc(docRef, payload, { merge: true });
+                console.log(`      ✅ Vaulted ${dbId}: ${group.dishes.length} line items for ${group.clientName}.`);
             }
         }
-        console.log("✨ Sync complete. Waiting for Firebase to settle...");
-        await new Promise(r => setTimeout(r, 3000));
-        console.log("🏁 Done.");
-    } catch (e) {
-        console.error(e);
-    } finally {
-        await browser.close();
-        process.exit(0);
     }
+
+    console.log("🎉 Forkable Ingestion Complete!");
+    await browser.close();
+    process.exit(0);
 })();
