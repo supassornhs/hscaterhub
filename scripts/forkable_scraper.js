@@ -19,7 +19,7 @@ const db = getFirestore(firebaseApp);
     console.log("🚀 Initializing Forkable Scraper (Production)...");
 
     const browser = await puppeteer.launch({
-        headless: "new",
+        headless: false,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     const page = await browser.newPage();
@@ -157,10 +157,33 @@ const db = getFirestore(firebaseApp);
                     const groupCode = codeMatch ? codeMatch[1] : "G";
                     const clientName = txt.replace(/^Group [A-Z0-9]+\s*-\s*/i, '').replace(/\s*\d+\s*items$/, '').trim();
                     
+                    // Look for Utensil Count (Green icon next to item count)
+                    // We search in the parent container of the group header
+                    let utensilCount = 0;
+                    const headerContainer = el.closest('div, tr, section');
+                    if (headerContainer) {
+                        const icons = Array.from(headerContainer.querySelectorAll('div, span, i')).filter(icon => {
+                            const rect = icon.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        });
+                        // Forkable often uses a specific green background for utensils
+                        const utensilEl = icons.find(icon => {
+                            const style = window.getComputedStyle(icon);
+                            return (style.backgroundColor.includes('rgb(0, 184, 148)') || style.backgroundColor.includes('rgb(32, 191, 107)')) || 
+                                   (icon.innerText && icon.innerText.length < 5 && /^\d+$/.test(icon.innerText.trim()));
+                        });
+                        if (utensilEl) {
+                            const countMatch = utensilEl.parentElement.innerText.match(/(\d+)\s*$/);
+                            if (countMatch) utensilCount = parseInt(countMatch[1]);
+                        }
+                    }
+
                     currentGroup = { 
                         code: groupCode, 
                         clientName: clientName || "HolyShred HQ",
                         deliveryTime: currentDeliveryTime,
+                        utensils: utensilCount,
+                        subtotal: 0,
                         dishAggregator: {},
                         sideAggregator: {}
                     };
@@ -173,7 +196,17 @@ const db = getFirestore(firebaseApp);
                         const dishName = cells[1].innerText.split('\n')[0].trim();
                         const rawNotes = cells[1].innerText.split('\n').slice(1).join(', ').trim();
                         
+                        let price = 0;
+                        for (let i = cells.length - 1; i >= 1; i--) {
+                            if (cells[i].innerText.includes('$')) {
+                                price = parseFloat(cells[i].innerText.replace('$', '').replace(/,/g, '').trim()) || 0;
+                                break;
+                            }
+                        }
+
                         if (dishName && !dishName.toLowerCase().includes('subtotal')) {
+                            currentGroup.subtotal += price;
+                            
                             let sides = [];
                             let notes = [];
                             const noteParts = rawNotes.split(/[\|,]/);
@@ -214,7 +247,19 @@ const db = getFirestore(firebaseApp);
                 Object.entries(g.sideAggregator).forEach(([sideName, count]) => {
                     finalItems.push({ name: sideName, amount: count, notes: "Total for order" });
                 });
+                
+                // Add Utensils as an item
+                if (g.utensils > 0) {
+                    finalItems.push({
+                        name: "Utensils",
+                        amount: g.utensils,
+                        notes: "Automatic addition from Forkable"
+                    });
+                }
+
                 g.dishes = finalItems;
+                g.orderTotal = g.subtotal;
+                g.netPayout = g.subtotal * 0.75; // Deduct 25% commission
             });
 
             return { dateStr, groups, url: window.location.href };
@@ -223,7 +268,7 @@ const db = getFirestore(firebaseApp);
         if (sessionData.groups.length > 0) {
             const sessionId = sessionData.url.split('/').pop() || Date.now().toString();
             for (const group of sessionData.groups) {
-                const dbId = `FORK-${date}-${group.code}`;
+                const dbId = `${group.code}-${date}`;
                 const payload = {
                     id: dbId,
                     platform: "Forkable",
@@ -234,6 +279,9 @@ const db = getFirestore(firebaseApp);
                     deliveryMethod: "Pickup",
                     status: "Finalized",
                     items: group.dishes,
+                    subtotal: group.subtotal,
+                    orderTotal: group.orderTotal,
+                    netPayout: group.netPayout,
                     overallNotes: `Source: ${sessionData.url} | Session: ${sessionId}`
                 };
 
