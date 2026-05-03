@@ -277,7 +277,7 @@ const db = getFirestore(firebaseApp);
                     deliveryDate: date,
                     deliveryTime: group.deliveryTime,
                     pickUpTime: group.deliveryTime,
-                    deliveryMethod: "Pickup",
+                    deliveryMethod: "Platform",
                     status: "Finalized",
                     items: group.dishes,
                     subtotal: group.subtotal,
