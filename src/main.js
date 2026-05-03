@@ -335,7 +335,7 @@ function renderOrders() {
 
       let methodTimeStr = '';
       let methodType = order.deliveryMethod || 'Platform';
-      if (methodType.toLowerCase() === 'platform' || methodType.toLowerCase() === 'partner') {
+      if (['platform', 'partner', 'pickup'].includes(methodType.toLowerCase())) {
           methodTimeStr = `Pick up: <span style="color: #6ee7b7; font-weight: 500;">${order.pickUpTime || order.deliveryTime || 'TBD'}</span>`;
       } else {
           methodTimeStr = `Deliver: <span style="color: #6ee7b7; font-weight: 500;">${order.deliveryTime || 'TBD'}</span>`;
@@ -429,7 +429,7 @@ function openOrderDetails(order) {
     let timeLabel = '';
     let timeValue = '';
     let methodType = order.deliveryMethod || 'Platform';
-    if (methodType.toLowerCase() === 'platform' || methodType.toLowerCase() === 'partner') {
+    if (['platform', 'partner', 'pickup'].includes(methodType.toLowerCase())) {
         timeLabel = 'Pick Up Time';
         timeValue = order.pickUpTime || order.deliveryTime;
     } else {
