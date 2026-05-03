@@ -276,6 +276,7 @@ const db = getFirestore(firebaseApp);
                     typeOfOrder: "Meal Manager",
                     deliveryDate: date,
                     deliveryTime: group.deliveryTime,
+                    pickUpTime: group.deliveryTime,
                     deliveryMethod: "Pickup",
                     status: "Finalized",
                     items: group.dishes,

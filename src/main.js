@@ -1371,7 +1371,7 @@ function renderPrepTab() {
 
         targetOrders.forEach(o => {
             let plat = normalizePlatform(o.platform);
-            let time = o.pickUpTime || o.deliveryTime || "";
+            let time = o.pickUpTime || "";
             let key = `${plat}|${time}`;
 
             if (!orderGroups[key]) {
