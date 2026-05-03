@@ -1253,48 +1253,55 @@ function renderPrepTab() {
         return o.deliveryDate.startsWith(dateInput);
     });
 
-    let dishMap = {}; // { "Shredded Chicken Noodle": { qty: 2, servings: 2, menuRef: {...} } }
+    let dishMap = {}; // { "Shredded Chicken Noodle___Notes": { name: "Shredded Chicken Noodle", notes: "...", qty: 2, servings: 2, menuRef: {...} } }
 
     targetOrders.forEach(o => {
         if (o.items && Array.isArray(o.items)) {
             o.items.forEach(itm => {
-                let name = getOfficialDishName(itm.name);
+                let baseName = getOfficialDishName(itm.name);
+                let notes = itm.notes ? String(itm.notes).trim() : "";
                 let q = parseInt(itm.amount) || 1;
                 
-                if (!dishMap[name]) dishMap[name] = { qty: 0, servings: 0, menuRef: null };
-                dishMap[name].qty += q;
+                let key = notes ? `${baseName}___${notes}` : baseName;
+                
+                if (!dishMap[key]) dishMap[key] = { baseName: baseName, notes: notes, qty: 0, servings: 0, menuRef: null };
+                dishMap[key].qty += q;
             });
         }
     });
 
     // Resolve menu bindings to compute pure servings
-    // Resolve menu bindings to compute pure servings
-    Object.keys(dishMap).forEach(dishName => {
-        let menuMatch = menuItems.find(m => m.title === dishName);
+    Object.keys(dishMap).forEach(key => {
+        let dish = dishMap[key];
+        let menuMatch = menuItems.find(m => m.title === dish.baseName);
 
         if (menuMatch) {
-            dishMap[dishName].menuRef = menuMatch;
+            dish.menuRef = menuMatch;
             let servMult = parseInt(menuMatch.serving) || 1;
-            dishMap[dishName].servings = dishMap[dishName].qty * servMult;
+            dish.servings = dish.qty * servMult;
         } else {
-            dishMap[dishName].servings = dishMap[dishName].qty; // Default 1:1 if unknown
+            dish.servings = dish.qty; // Default 1:1 if unknown
         }
     });
 
     if (currentPrepView === 'dish') {
         const tbody = document.getElementById('prep-dish-tbody');
         let html = '';
-        const sortedDishes = Object.keys(dishMap).sort((a,b) => dishMap[b].qty - dishMap[a].qty);
+        const sortedKeys = Object.keys(dishMap).sort((a,b) => dishMap[b].qty - dishMap[a].qty);
         
-        sortedDishes.forEach(d => {
+        sortedKeys.forEach(k => {
+            let dish = dishMap[k];
             html += `<tr>
-                <td style="padding-left: 1rem; color: #f8fafc;">${d} ${dishMap[d].menuRef ? '' : '<span style="color: #fbbf24; font-size: 0.65rem; margin-left: 0.5rem; border: 1px solid #fbbf24; padding: 2px 4px; border-radius: 4px;">Unlinked</span>'}</td>
-                <td style="text-align: right; color: #9ca3af;">${dishMap[d].qty}</td>
-                <td style="text-align: right; padding-right: 1rem; color: #6ee7b7; font-weight: bold;">${dishMap[d].servings}</td>
+                <td style="padding-left: 1rem; color: #f8fafc; padding-top: 0.75rem; padding-bottom: 0.75rem;">
+                    <div style="font-weight: 500;">${dish.baseName} ${dish.menuRef ? '' : '<span style="color: #fbbf24; font-size: 0.65rem; margin-left: 0.5rem; border: 1px solid #fbbf24; padding: 2px 4px; border-radius: 4px;">Unlinked</span>'}</div>
+                    ${dish.notes ? `<div style="font-size: 0.8rem; color: #9ca3af; margin-top: 0.25rem;">Note: ${dish.notes}</div>` : ''}
+                </td>
+                <td style="text-align: right; color: #9ca3af;">${dish.qty}</td>
+                <td style="text-align: right; padding-right: 1rem; color: #6ee7b7; font-weight: bold;">${dish.servings}</td>
             </tr>`;
         });
         
-        if (sortedDishes.length === 0) {
+        if (sortedKeys.length === 0) {
             html = `<tr><td colspan="3" style="text-align: center; color: #64748b; padding: 2rem;">No orders matched the selected date.</td></tr>`;
         }
         tbody.innerHTML = html;
@@ -1364,7 +1371,7 @@ function renderPrepTab() {
 
         targetOrders.forEach(o => {
             let plat = normalizePlatform(o.platform);
-            let time = o.pickUpTime || "";
+            let time = o.pickUpTime || o.deliveryTime || "";
             let key = `${plat}|${time}`;
 
             if (!orderGroups[key]) {
@@ -1377,9 +1384,16 @@ function renderPrepTab() {
 
             if (o.items && Array.isArray(o.items)) {
                 o.items.forEach(itm => {
-                    let name = getOfficialDishName(itm.name);
+                    let baseName = getOfficialDishName(itm.name);
+                    let notes = itm.notes ? String(itm.notes).trim() : "";
                     let amt = parseInt(itm.amount) || 1;
-                    orderGroups[key].items[name] = (orderGroups[key].items[name] || 0) + amt;
+                    
+                    let itemKey = notes ? `${baseName}___${notes}` : baseName;
+                    
+                    if (!orderGroups[key].items[itemKey]) {
+                        orderGroups[key].items[itemKey] = { name: baseName, notes: notes, amount: 0 };
+                    }
+                    orderGroups[key].items[itemKey].amount += amt;
                 });
             }
         });
@@ -1389,10 +1403,13 @@ function renderPrepTab() {
         
         sortedGroups.forEach(key => {
             const group = orderGroups[key];
-            let itemTags = Object.entries(group.items).map(([name, amt]) => `
+            let itemTags = Object.values(group.items).map(item => `
                 <div style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                    <span style="color: #f8fafc; font-weight: 500;">${name}</span>
-                    <strong style="color: #6ee7b7; background: rgba(110, 231, 183, 0.1); padding: 4px 10px; border-radius: 6px; font-size: 1rem;">${amt}x</strong>
+                    <div style="display: flex; flex-direction: column;">
+                       <span style="color: #f8fafc; font-weight: 500;">${item.name}</span>
+                       ${item.notes ? `<span style="font-size: 0.75rem; color: #9ca3af; margin-top: 0.25rem;">Note: ${item.notes}</span>` : ''}
+                    </div>
+                    <strong style="color: #6ee7b7; background: rgba(110, 231, 183, 0.1); padding: 4px 10px; border-radius: 6px; font-size: 1rem;">${item.amount}x</strong>
                 </div>
             `).join('');
 
