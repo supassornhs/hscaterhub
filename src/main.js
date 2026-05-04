@@ -609,7 +609,7 @@ document.getElementById('save-new-menu-btn')?.addEventListener('click', async ()
 
 // Crawler Configurations UI
 let crawlerConfigs = {};
-const PLATFORMS_TO_TRACK = ['ezCater', 'ClubFeast', 'Cater2.me', 'Forkable', 'ZeroCater', 'Email Source'];
+const PLATFORMS_TO_TRACK = ['ezCater', 'ClubFeast', 'Cater2.me', 'Forkable', 'Email Source'];
 
 onSnapshot(doc(db, 'system', 'crawlers'), (docSnap) => {
   if (docSnap.exists()) {
