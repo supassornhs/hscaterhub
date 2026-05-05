@@ -5,6 +5,7 @@ import { simpleParser } from 'mailparser';
 import * as dotenv from 'dotenv';
 import { sendAlertEmail } from './mailer.js';
 import * as XLSX from 'xlsx';
+import * as cheerio from 'cheerio';
 
 dotenv.config();
 
@@ -54,23 +55,28 @@ const config = {
         port: 993,
         tls: true,
         tlsOptions: { rejectUnauthorized: false },
-        authTimeout: 15000
+        authTimeout: 60000
     }
 };
 
-async function processDoordashEmail(text) {
-    // 1. Support both "New Catering Order for..." and "Accept your catering order for..."
-    let subjectMatch = text.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i) || 
-                       text.match(/Accept your catering order for (.+)/i);
-    
-    if (!subjectMatch) return;
+async function processDoordashEmail(subject, text, html) {
+    try {
+        console.log(`      DEBUG: Processing email. Subject: "${subject}", Text length: ${text?.length || 0}`);
+        
+        // 1. Support both "New Catering Order for..." and "Accept your catering order for..."
+        let subjectMatch = subject.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i) || 
+                           subject.match(/Accept your catering order for (.+)/i);
+        
+        if (!subjectMatch) {
+            console.log("      DEBUG: Subject format not recognized in subject line.");
+            return;
+        }
 
-    let customerName = subjectMatch[1].trim();
+        let customerName = subjectMatch[1].trim();
 
     // 2. Order ID Detection
     let orderIdFromSub = subjectMatch[2] || "";
     if (!orderIdFromSub) {
-        // Look for "Order number 0a31f8e1" or "Order ID: 12345"
         const idMatch = text.match(/Order (?:number|id|num)\s*:?\s*([a-zA-Z0-9]+)/i) || 
                         text.match(/(?:ID|Number):\s*([a-zA-Z0-9]+)/i);
         if (idMatch) orderIdFromSub = idMatch[1];
@@ -81,12 +87,10 @@ async function processDoordashEmail(text) {
     let deliveryTime = "12:00 PM";
     let deliveryDateStr = `${cleanDate.getFullYear()}-${(cleanDate.getMonth() + 1).toString().padStart(2, '0')}-${cleanDate.getDate().toString().padStart(2, '0')}`;
 
-    // 3. Time Detection (Pickup or Delivery)
+    // 3. Time & Date Detection
     const timeMatch = text.match(/(?:Estimated pickup time|Arriving at|Delivery time)\s*:?\s*(\d+:\d+\s*(?:AM|PM))/i);
     if (timeMatch) deliveryTime = timeMatch[1].toUpperCase();
 
-    // 4. Date Detection
-    // Matches "Wed, May 6" or "Wednesday, May 6, 2026"
     const dateMatch = text.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*([a-zA-Z]+\s+\d+)(?:,?\s*(\d{4}))?/i);
     if (dateMatch) {
         const monthDay = dateMatch[1];
@@ -97,34 +101,81 @@ async function processDoordashEmail(text) {
         }
     }
 
-    // 5. Item Count & Subtotal
-    const itemsMatch = text.match(/(\d+)\s*items/i);
-    const itemCount = itemsMatch ? parseInt(itemsMatch[1]) : 1;
+    // 4. Item Parsing (HTML first, then Text)
+    let finalItems = [];
+
+    if (html) {
+        const $ = cheerio.load(html);
+        console.log("      DEBUG: Parsing HTML with Cheerio...");
+        const processedRows = new Set();
+        
+        $('tr').each((i, el) => {
+            let rowText = $(el).text().trim().replace(/\s+/g, ' ');
+            if (!rowText || processedRows.has(rowText)) return;
+            
+            // Match pattern: "1x Charcoal-Grilled BBQ Chicken Rice (Meal) $72.25"
+            // We require the line to START with a quantity and contain a price
+            const match = rowText.match(/^(\d+)\s*[xX]\s+([\s\S]+?)\s*\$?(\d+\.\d{2})$/);
+            if (match) {
+                processedRows.add(rowText);
+                const qty = parseInt(match[1]);
+                let fullText = match[2].trim();
+                
+                const noteMatch = fullText.match(/^(.+?)\s*\((.+)\)$/);
+                const name = noteMatch ? noteMatch[1].trim() : fullText;
+                const notes = noteMatch ? noteMatch[2].trim() : "";
+
+                finalItems.push({ name, amount: qty, notes });
+            }
+        });
+    }
+
+    // Text Fallback (Improved for multi-line)
+    if (finalItems.length === 0) {
+        console.log("      DEBUG: HTML failed, using Text Fallback...");
+        const detailsBlock = text.match(/(?:Order details|Order summary)([\s\S]+?)Subtotal/i);
+        if (detailsBlock) {
+            const lines = detailsBlock[1].split(/\r?\n/).map(l => l.trim()).filter(l => l);
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                // Check if current line is name and next is price
+                const priceMatch = lines[i+1]?.match(/^\$?(\d+\.\d{2})$/);
+                if (priceMatch) {
+                    const nameFull = line;
+                    const noteMatch = nameFull.match(/^(.+?)\s*\((.+)\)$/);
+                    finalItems.push({
+                        name: noteMatch ? noteMatch[1].trim() : nameFull,
+                        amount: 1, // Default to 1 if we can't find quantity in text
+                        notes: noteMatch ? noteMatch[2].trim() : ""
+                    });
+                    i++; // Skip the price line
+                }
+            }
+        }
+    }
+
+    if (finalItems.length === 0) {
+        const itemsMatch = text.match(/(\d+)\s*items/i);
+        finalItems.push({ name: `DoorDash Order (${itemsMatch ? itemsMatch[1] : '??'} items)`, amount: 1, notes: "Details in Email" });
+    }
     
     const subtotalMatch = text.match(/Subtotal\s*\$?(\d+\.\d{2})/i);
     const subtotal = subtotalMatch ? parseFloat(subtotalMatch[1]) : 0;
-
-    let orderId = `DD-${deliveryDateStr.replace(/-/g, '').substring(4)}-${orderIdFromSub}`;
+    const orderId = `DD-${deliveryDateStr.replace(/-/g, '').substring(4)}-${orderIdFromSub}`;
 
     let newOrder = {
-        id: orderId, 
-        platform: "DoorDash", 
-        customerName: customerName,
-        typeOfOrder: "Catering", 
-        deliveryDate: deliveryDateStr, 
-        deliveryTime: deliveryTime, 
-        deliveryMethod: "Platform", 
-        pickUpTime: deliveryTime, 
-        subtotal: subtotal, 
-        total: subtotal, // Basic fallback
-        status: "New", 
-        items: [{ name: `DoorDash Order (${itemCount} items)`, amount: 1, notes: "Parsed from Email Summary" }],
-        createdAt: new Date().toISOString(), 
-        isDeleted: false
+        id: orderId, platform: "DoorDash", customerName,
+        typeOfOrder: "Catering", deliveryDate: deliveryDateStr, deliveryTime,
+        deliveryMethod: "Platform", pickUpTime: deliveryTime,
+        subtotal, total: subtotal, status: "New", items: finalItems,
+        createdAt: new Date().toISOString(), isDeleted: false
     };
 
     await setDoc(doc(db, 'orders', orderId), newOrder, { merge: true });
-    console.log(`      ✅ Vaulted DoorDash Order: ${orderId} for ${customerName}`);
+    console.log(`      ✅ Vaulted DoorDash Order: ${orderId} for ${customerName} (${finalItems.length} items)`);
+    } catch (e) {
+        console.error("      ❌ Error in processDoordashEmail:", e.message);
+    }
 }
 
 async function run() {
@@ -155,8 +206,7 @@ async function run() {
                 let subjectHeader = (headerPart.subject || [''])[0] || '';
                 
                 let parsedMail = await simpleParser(all.body);
-                let combinedText = subjectHeader + "\n\n" + (parsedMail.text || "");
-                await processDoordashEmail(combinedText);
+                await processDoordashEmail(subjectHeader, parsedMail.text || "", parsedMail.html || "");
                 
             } catch (innerErr) { console.error("❌ Msg Error:", innerErr.message); }
         }

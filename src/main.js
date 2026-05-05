@@ -798,6 +798,10 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
             if (el.value) el.dataset.dirty = "true";
           }
         });
+        document.querySelectorAll('#platform-details-container .platform-weight').forEach(el => {
+          const p = el.getAttribute('data-platform');
+          if (item.platformOverrides[p]) el.value = item.platformOverrides[p].weight || '';
+        });
       }
       
       addMenuModal.classList.add('active');
@@ -987,7 +991,7 @@ function initPlatformRows() {
   menuPlatforms.forEach(p => {
     const row = document.createElement('div');
     row.style.display = 'grid';
-    row.style.gridTemplateColumns = '1fr 2fr 2fr 1fr';
+    row.style.gridTemplateColumns = '1fr 1.5fr 1.5fr 0.8fr 0.8fr';
     row.style.gap = '0.5rem';
     row.style.alignItems = 'center';
     row.style.background = 'rgba(255, 255, 255, 0.02)';
@@ -997,9 +1001,10 @@ function initPlatformRows() {
     
     row.innerHTML = `
       <strong style="color: var(--text-primary); font-size: 0.85rem;">${p}</strong>
-      <input type="text" class="platform-alias" data-platform="${p}" placeholder="Alias Name..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none;" />
-      <input type="text" class="platform-note" data-platform="${p}" placeholder="Special Note..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none;" />
-      <input type="number" step="0.01" class="platform-price" data-platform="${p}" placeholder="Price ($)" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none;" />
+      <input type="text" class="platform-alias" data-platform="${p}" placeholder="Alias Name..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
+      <input type="text" class="platform-note" data-platform="${p}" placeholder="Special Note..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
+      <input type="number" step="0.01" class="platform-price" data-platform="${p}" placeholder="Price ($)" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
+      <input type="number" class="platform-weight" data-platform="${p}" placeholder="Weight (g)" title="Custom weight for this platform" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: #6ee7b7; outline: none; font-size: 0.8rem;" />
     `;
     platformDetailsContainer.appendChild(row);
   });
@@ -1091,6 +1096,11 @@ addMenuForm.addEventListener('submit', async (e) => {
     const plat = el.getAttribute('data-platform');
     if (!overrides[plat]) overrides[plat] = {};
     overrides[plat].price = el.value;
+  });
+  document.querySelectorAll('#platform-details-container .platform-weight').forEach(el => {
+    const plat = el.getAttribute('data-platform');
+    if (!overrides[plat]) overrides[plat] = {};
+    overrides[plat].weight = el.value;
   });
 
   const payload = {

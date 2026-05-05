@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "sync-forkable": "node scripts/forkable_scraper.js"
+    "sync-forkable": "node scripts/forkable_scraper.js",
+    "sync-emails": "node scripts/email_scraper.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
