@@ -65,6 +65,8 @@ async function processDoordashEmail(text) {
     
     if (!subjectMatch) return;
 
+    let customerName = subjectMatch[1].trim();
+
     // 2. Order ID Detection
     let orderIdFromSub = subjectMatch[2] || "";
     if (!orderIdFromSub) {
