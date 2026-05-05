@@ -34,21 +34,21 @@ const db = getFirestore(firebaseApp);
     });
     await page.setCookie(...cookies);
 
-    // 2. Define target dates (Current Week: Monday to Friday)
-    const today = new Date();
-    const dayOfWeek = today.getDay(); // 0 (Sun) to 6 (Sat)
-    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust to Monday
-    const monday = new Date(today.setDate(diff));
-    
+    // 2. Define target dates (Last 7 days to Next 7 days)
     const dates = [];
-    for (let i = 0; i < 5; i++) {
-        const d = new Date(monday);
-        d.setDate(monday.getDate() + i);
-        dates.push(d.toISOString().split('T')[0]);
+    for (let i = -7; i <= 7; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() + i);
+        // Only scrape Monday to Friday
+        if (d.getDay() >= 1 && d.getDay() <= 5) {
+            dates.push(d.toISOString().split('T')[0]);
+        }
     }
-    console.log(`📅 Target Dates for this week: ${dates.join(', ')}`);
+    // Remove duplicates and sort
+    const uniqueDates = [...new Set(dates)].sort();
+    console.log(`📅 Target Dates for scraping window: ${uniqueDates.join(', ')}`);
 
-    for (const date of dates) {
+    for (const date of uniqueDates) {
         const targetUrl = `https://forkable.com/fpp/2297/${date}/17201`;
         console.log(`📡 Accessing Direct URL: ${targetUrl}`);
         await page.goto(targetUrl, { waitUntil: 'networkidle2' });
