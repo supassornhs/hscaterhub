@@ -744,7 +744,7 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
       document.getElementById('add-menu-form').reset();
       if (typeof allergenTags !== 'undefined') {
         allergenTags = [];
-        renderTags();
+        renderAllTags();
       }
       initPlatformRows();
 
