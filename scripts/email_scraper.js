@@ -59,20 +59,44 @@ const config = {
 };
 
 async function processDoordashEmail(text) {
-    let subjectMatch = text.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i);
+    // 1. Support both "New Catering Order for..." and "Accept your catering order for..."
+    let subjectMatch = text.match(/New Catering Order for (.+) - ([a-zA-Z0-9]+)/i) || 
+                       text.match(/Accept your catering order for (.+)/i);
+    
     if (!subjectMatch) return;
-    let orderIdFromSub = subjectMatch[2];
+
+    let customerName = subjectMatch[1].trim();
+    let orderIdFromSub = subjectMatch[2] || "";
+    
+    // 2. Fallback: If no Order ID in subject, try to find it in the body (e.g. "Order ID: 123456789")
+    if (!orderIdFromSub) {
+        const idMatch = text.match(/Order (?:ID|Number):\s*([a-zA-Z0-9]+)/i) || text.match(/ID:\s*([a-zA-Z0-9]{5,})/i);
+        if (idMatch) orderIdFromSub = idMatch[1];
+        else orderIdFromSub = Math.random().toString(36).substring(2, 7).toUpperCase(); // Last resort random ID
+    }
+
     let cleanDate = new Date();
     let month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
     let day = cleanDate.getDate().toString().padStart(2, '0');
     let orderId = `DD-${month}${day}-${orderIdFromSub}`;
+
     let newOrder = {
-        id: orderId, platform: "DoorDash", customerName: subjectMatch[1].trim(),
-        typeOfOrder: "Catering", deliveryDate: `${cleanDate.getFullYear()}-${month}-${day}`, 
-        deliveryTime: "12:00 PM", deliveryMethod: "Platform", pickUpTime: "12:00 PM", 
-        subtotal: 0, total: 0, status: "New", items: [{ name: "DoorDash Bundle", amount: 1, notes: "" }],
-        createdAt: new Date().toISOString(), isDeleted: false
+        id: orderId, 
+        platform: "DoorDash", 
+        customerName: customerName,
+        typeOfOrder: "Catering", 
+        deliveryDate: `${cleanDate.getFullYear()}-${month}-${day}`, 
+        deliveryTime: "12:00 PM", 
+        deliveryMethod: "Platform", 
+        pickUpTime: "12:00 PM", 
+        subtotal: 0, 
+        total: 0, 
+        status: "New", 
+        items: [{ name: "DoorDash Bundle", amount: 1, notes: "Parsed from 'Accept Order' Email" }],
+        createdAt: new Date().toISOString(), 
+        isDeleted: false
     };
+
     await setDoc(doc(db, 'orders', orderId), newOrder, { merge: true });
 }
 
