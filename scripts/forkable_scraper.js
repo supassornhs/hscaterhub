@@ -88,207 +88,225 @@ const db = getFirestore(firebaseApp);
         }
         await new Promise(r => setTimeout(r, 8000));
 
-        const sessionButton = await page.evaluate(() => {
+        const sessionButtons = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span, .btn'));
-            const btn = elements.find(el => {
+            const btns = elements.filter(el => {
                 const txt = (el.innerText || "").toLowerCase().trim();
                 const rect = el.getBoundingClientRect();
                 const isVisible = rect.width > 0 && rect.height > 0;
                 return isVisible && txt.length < 30 && (txt.includes('view order') || txt.includes('view completed order'));
             });
-            if (!btn) return null;
-            const rect = btn.getBoundingClientRect();
-            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: btn.innerText.trim() };
+            return btns.map(btn => {
+                const rect = btn.getBoundingClientRect();
+                return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: btn.innerText.trim() };
+            });
         });
 
-        if (!sessionButton) {
-            console.log(`   ⚠️ No session button found for ${date}.`);
+        if (sessionButtons.length === 0) {
+            console.log(`   ⚠️ No session buttons found for ${date}.`);
             continue;
         }
 
-        console.log(`   🖱️ Clicking "${sessionButton.text}"...`);
-        await page.mouse.click(sessionButton.x, sessionButton.y);
-        await new Promise(r => setTimeout(r, 15000)); 
+        console.log(`   🔎 Found ${sessionButtons.length} pickup sessions for ${date}. Processing...`);
 
-        console.log(`   📜 Slow Scrolling for items...`);
-        await page.evaluate(async () => {
-            await new Promise((resolve) => {
-                let totalHeight = 0;
-                let distance = 300;
-                let timer = setInterval(() => {
-                    let scrollHeight = document.body.scrollHeight;
-                    window.scrollBy(0, distance);
-                    totalHeight += distance;
-                    if (totalHeight >= scrollHeight) {
-                        clearInterval(timer);
-                        resolve();
-                    }
-                }, 200);
-            });
-        });
-        await new Promise(r => setTimeout(r, 5000));
-
-        const sessionData = await page.evaluate(() => {
-            const getTxt = (sel) => (document.querySelector(sel)?.innerText || "").trim();
-            const dateStr = getTxt('.order-summary-header-date') || getTxt('h1') || "";
-            
-            const groups = [];
-            let currentGroup = null;
-            let currentDeliveryTime = "Morning Pickup";
-            
-            const elements = Array.from(document.querySelectorAll('div, span, p, tr, h4, .order-item, .item-row'));
-            
-            elements.forEach(el => {
-                const txt = (el.innerText || "").trim();
-                if (!txt) return;
-
-                const timeMatch = txt.match(/^(\d{1,2}:\d{2}\s*(?:AM|PM))$/i);
-                if (timeMatch) {
-                    currentDeliveryTime = timeMatch[1];
-                    return;
-                }
-
-                if (txt.startsWith("Group ")) {
-                    if (currentGroup) {
-                        groups.push(currentGroup);
-                    }
-                    
-                    const codeMatch = txt.match(/Group ([A-Z0-9]+)/i);
-                    const groupCode = codeMatch ? codeMatch[1] : "G";
-                    const clientName = txt.replace(/^Group [A-Z0-9]+\s*-\s*/i, '').replace(/\s*\d+\s*items$/, '').trim();
-                    
-                    // Look for Utensil Count (Green icon next to item count)
-                    // We search in the parent container of the group header
-                    let utensilCount = 0;
-                    const headerContainer = el.closest('div, tr, section');
-                    if (headerContainer) {
-                        const icons = Array.from(headerContainer.querySelectorAll('div, span, i')).filter(icon => {
-                            const rect = icon.getBoundingClientRect();
-                            return rect.width > 0 && rect.height > 0;
-                        });
-                        // Forkable often uses a specific green background for utensils
-                        const utensilEl = icons.find(icon => {
-                            const style = window.getComputedStyle(icon);
-                            return (style.backgroundColor.includes('rgb(0, 184, 148)') || style.backgroundColor.includes('rgb(32, 191, 107)')) || 
-                                   (icon.innerText && icon.innerText.length < 5 && /^\d+$/.test(icon.innerText.trim()));
-                        });
-                        if (utensilEl) {
-                            const countMatch = utensilEl.parentElement.innerText.match(/(\d+)\s*$/);
-                            if (countMatch) utensilCount = parseInt(countMatch[1]);
-                        }
-                    }
-
-                    currentGroup = { 
-                        code: groupCode, 
-                        clientName: clientName || "HolyShred HQ",
-                        deliveryTime: currentDeliveryTime,
-                        utensils: utensilCount,
-                        subtotal: 0,
-                        dishAggregator: {},
-                        sideAggregator: {}
-                    };
-                    return;
-                }
-
-                if (currentGroup && el.tagName === 'TR') {
-                    const cells = Array.from(el.querySelectorAll('td'));
-                    if (cells.length >= 2) {
-                        const dishName = cells[1].innerText.split('\n')[0].trim();
-                        const rawNotes = cells[1].innerText.split('\n').slice(1).join(', ').trim();
-                        
-                        let price = 0;
-                        for (let i = cells.length - 1; i >= 1; i--) {
-                            if (cells[i].innerText.includes('$')) {
-                                price = parseFloat(cells[i].innerText.replace('$', '').replace(/,/g, '').trim()) || 0;
-                                break;
-                            }
-                        }
-
-                        if (dishName && !dishName.toLowerCase().includes('subtotal')) {
-                            currentGroup.subtotal += price;
-                            
-                            let sides = [];
-                            let notes = [];
-                            const noteParts = rawNotes.split(/[\|,]/);
-                            noteParts.forEach(part => {
-                                const p = part.trim();
-                                if (!p || p.toLowerCase().includes('for:')) return;
-                                if (p.toLowerCase().includes('add side:')) {
-                                    const sideName = p.replace(/»?\s*Add Side:\s*/gi, '').trim();
-                                    sides.push(sideName);
-                                    currentGroup.sideAggregator[sideName] = (currentGroup.sideAggregator[sideName] || 0) + 1;
-                                } else {
-                                    notes.push(p);
-                                }
-                            });
-
-                            const sideLabel = sides.length > 0 ? `Added Side: ${sides.join(', ')}` : "";
-                            const fullNotes = [sideLabel, ...notes].filter(Boolean).join(' | ');
-                            const aggregatorKey = `${dishName}___${fullNotes}`;
-
-                            if (!currentGroup.dishAggregator[aggregatorKey]) {
-                                currentGroup.dishAggregator[aggregatorKey] = { name: dishName, count: 0, notes: fullNotes };
-                            }
-                            currentGroup.dishAggregator[aggregatorKey].count += 1;
-                        }
-                    }
-                }
-            });
-            
-            if (currentGroup) {
-                groups.push(currentGroup);
+        for (let sIdx = 0; sIdx < sessionButtons.length; sIdx++) {
+            // Re-fetch button positions if not first session (page might have shifted)
+            let targetBtn = sessionButtons[sIdx];
+            if (sIdx > 0) {
+                // Re-expand if collapsed (going back usually collapses)
+                // ... logic to re-expand ...
+                await new Promise(r => setTimeout(r, 2000));
             }
 
-            groups.forEach(g => {
-                const finalItems = [];
-                Object.values(g.dishAggregator).forEach(item => {
-                    finalItems.push({ name: item.name, amount: item.count, notes: item.notes });
+            console.log(`   🖱️ Clicking session ${sIdx + 1}/${sessionButtons.length}: "${targetBtn.text}"...`);
+            await page.mouse.click(targetBtn.x, targetBtn.y);
+            await new Promise(r => setTimeout(r, 15000)); 
+
+            console.log(`   📜 Slow Scrolling for items...`);
+            await page.evaluate(async () => {
+                await new Promise((resolve) => {
+                    let totalHeight = 0;
+                    let distance = 300;
+                    let timer = setInterval(() => {
+                        let scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if (totalHeight >= scrollHeight) {
+                            clearInterval(timer);
+                            resolve();
+                        }
+                    }, 200);
                 });
-                Object.entries(g.sideAggregator).forEach(([sideName, count]) => {
-                    finalItems.push({ name: sideName, amount: count, notes: "Total for order" });
+            });
+            await new Promise(r => setTimeout(r, 5000));
+
+            const sessionData = await page.evaluate(() => {
+                const getTxt = (sel) => (document.querySelector(sel)?.innerText || "").trim();
+                const dateStr = getTxt('.order-summary-header-date') || getTxt('h1') || "";
+                
+                const groups = [];
+                let currentGroup = null;
+                let currentDeliveryTime = "Morning Pickup";
+                
+                const elements = Array.from(document.querySelectorAll('div, span, p, tr, h4, .order-item, .item-row'));
+                
+                elements.forEach(el => {
+                    const txt = (el.innerText || "").trim();
+                    if (!txt) return;
+
+                    const timeMatch = txt.match(/^(\d{1,2}:\d{2}\s*(?:AM|PM))$/i);
+                    if (timeMatch) {
+                        currentDeliveryTime = timeMatch[1];
+                        return;
+                    }
+
+                    if (txt.startsWith("Group ")) {
+                        if (currentGroup) {
+                            groups.push(currentGroup);
+                        }
+                        
+                        const codeMatch = txt.match(/Group ([A-Z0-9]+)/i);
+                        const groupCode = codeMatch ? codeMatch[1] : "G";
+                        const clientName = txt.replace(/^Group [A-Z0-9]+\s*-\s*/i, '').replace(/\s*\d+\s*items$/, '').trim();
+                        
+                        let utensilCount = 0;
+                        const headerContainer = el.closest('div, tr, section');
+                        if (headerContainer) {
+                            const icons = Array.from(headerContainer.querySelectorAll('div, span, i')).filter(icon => {
+                                const rect = icon.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            });
+                            const utensilEl = icons.find(icon => {
+                                const style = window.getComputedStyle(icon);
+                                return (style.backgroundColor.includes('rgb(0, 184, 148)') || style.backgroundColor.includes('rgb(32, 191, 107)')) || 
+                                       (icon.innerText && icon.innerText.length < 5 && /^\d+$/.test(icon.innerText.trim()));
+                            });
+                            if (utensilEl) {
+                                const countMatch = utensilEl.parentElement.innerText.match(/(\d+)\s*$/);
+                                if (countMatch) utensilCount = parseInt(countMatch[1]);
+                            }
+                        }
+
+                        currentGroup = { 
+                            code: groupCode, 
+                            clientName: clientName || "HolyShred HQ",
+                            deliveryTime: currentDeliveryTime,
+                            utensils: utensilCount,
+                            subtotal: 0,
+                            dishAggregator: {},
+                            sideAggregator: {}
+                        };
+                        return;
+                    }
+
+                    if (currentGroup && el.tagName === 'TR') {
+                        const cells = Array.from(el.querySelectorAll('td'));
+                        if (cells.length >= 2) {
+                            const dishName = cells[1].innerText.split('\n')[0].trim();
+                            const rawNotes = cells[1].innerText.split('\n').slice(1).join(', ').trim();
+                            
+                            let price = 0;
+                            for (let i = cells.length - 1; i >= 1; i--) {
+                                if (cells[i].innerText.includes('$')) {
+                                    price = parseFloat(cells[i].innerText.replace('$', '').replace(/,/g, '').trim()) || 0;
+                                    break;
+                                }
+                            }
+
+                            if (dishName && !dishName.toLowerCase().includes('subtotal')) {
+                                currentGroup.subtotal += price;
+                                
+                                let sides = [];
+                                let notes = [];
+                                const noteParts = rawNotes.split(/[\|,]/);
+                                noteParts.forEach(part => {
+                                    const p = part.trim();
+                                    if (!p || p.toLowerCase().includes('for:')) return;
+                                    if (p.toLowerCase().includes('add side:')) {
+                                        const sideName = p.replace(/»?\s*Add Side:\s*/gi, '').trim();
+                                        sides.push(sideName);
+                                        currentGroup.sideAggregator[sideName] = (currentGroup.sideAggregator[sideName] || 0) + 1;
+                                    } else {
+                                        notes.push(p);
+                                    }
+                                });
+
+                                const sideLabel = sides.length > 0 ? `Added Side: ${sides.join(', ')}` : "";
+                                const fullNotes = [sideLabel, ...notes].filter(Boolean).join(' | ');
+                                const aggregatorKey = `${dishName}___${fullNotes}`;
+
+                                if (!currentGroup.dishAggregator[aggregatorKey]) {
+                                    currentGroup.dishAggregator[aggregatorKey] = { name: dishName, count: 0, notes: fullNotes };
+                                }
+                                currentGroup.dishAggregator[aggregatorKey].count += 1;
+                            }
+                        }
+                    }
                 });
                 
-                // Add Utensils as an item
-                if (g.utensils > 0) {
-                    finalItems.push({
-                        name: "Utensils",
-                        amount: g.utensils,
-                        notes: "Automatic addition from Forkable"
-                    });
-                }
+                if (currentGroup) groups.push(currentGroup);
 
-                g.dishes = finalItems;
-                g.orderTotal = g.subtotal;
-                g.netPayout = g.subtotal * 0.75; // Deduct 25% commission
+                groups.forEach(g => {
+                    const finalItems = [];
+                    Object.values(g.dishAggregator).forEach(item => {
+                        finalItems.push({ name: item.name, amount: item.count, notes: item.notes });
+                    });
+                    Object.entries(g.sideAggregator).forEach(([sideName, count]) => {
+                        finalItems.push({ name: sideName, amount: count, notes: "Total for order" });
+                    });
+                    if (g.utensils > 0) {
+                        finalItems.push({ name: "Utensils", amount: g.utensils, notes: "Automatic addition from Forkable" });
+                    }
+                    g.dishes = finalItems;
+                    g.orderTotal = g.subtotal;
+                    g.netPayout = g.subtotal * 0.75;
+                });
+
+                return { dateStr, groups, url: window.location.href };
             });
 
-            return { dateStr, groups, url: window.location.href };
-        });
+            if (sessionData.groups.length > 0) {
+                const sessionId = sessionData.url.split('/').pop() || Date.now().toString();
+                for (const group of sessionData.groups) {
+                    const timeClean = group.deliveryTime.replace(/[^a-zA-Z0-9]/g, '');
+                    const dbId = `${group.code}-${date}-${timeClean}`;
+                    
+                    const payload = {
+                        id: dbId,
+                        platform: "Forkable",
+                        customerName: group.clientName,
+                        typeOfOrder: "Meal Manager",
+                        deliveryDate: date,
+                        deliveryTime: group.deliveryTime,
+                        pickUpTime: group.deliveryTime,
+                        deliveryMethod: "Platform",
+                        status: "Finalized",
+                        items: group.dishes,
+                        subtotal: group.subtotal,
+                        orderTotal: group.orderTotal,
+                        netPayout: group.netPayout,
+                        overallNotes: `Source: ${sessionData.url} | Session: ${sessionId}`
+                    };
 
-        if (sessionData.groups.length > 0) {
-            const sessionId = sessionData.url.split('/').pop() || Date.now().toString();
-            for (const group of sessionData.groups) {
-                const dbId = `${group.code}-${date}`;
-                const payload = {
-                    id: dbId,
-                    platform: "Forkable",
-                    customerName: group.clientName,
-                    typeOfOrder: "Meal Manager",
-                    deliveryDate: date,
-                    deliveryTime: group.deliveryTime,
-                    pickUpTime: group.deliveryTime,
-                    deliveryMethod: "Platform",
-                    status: "Finalized",
-                    items: group.dishes,
-                    subtotal: group.subtotal,
-                    orderTotal: group.orderTotal,
-                    netPayout: group.netPayout,
-                    overallNotes: `Source: ${sessionData.url} | Session: ${sessionId}`
-                };
+                    const docRef = doc(db, 'orders', dbId);
+                    await setDoc(docRef, payload, { merge: true });
+                    console.log(`      ✅ Vaulted ${dbId}: ${group.dishes.length} line items for ${group.clientName}.`);
+                }
+            }
 
-                const docRef = doc(db, 'orders', dbId);
-                await setDoc(docRef, payload, { merge: true });
-                console.log(`      ✅ Vaulted ${dbId}: ${group.dishes.length} line items for ${group.clientName}.`);
+            console.log(`   🔙 Navigating back to main list...`);
+            await page.goBack();
+            await new Promise(r => setTimeout(r, 15000));
+
+            if (sIdx < sessionButtons.length - 1) {
+                console.log(`   🔄 Re-expanding row for next session...`);
+                await page.evaluate((d) => {
+                    const dayRegex = new RegExp(d, 'i');
+                    const rows = Array.from(document.querySelectorAll('div, span, p, a, button'));
+                    const r = rows.find(el => dayRegex.test((el.innerText || "").trim()) && el.getBoundingClientRect().width > 200);
+                    if (r) r.click();
+                }, date);
+                await new Promise(r => setTimeout(r, 8000));
             }
         }
     }
