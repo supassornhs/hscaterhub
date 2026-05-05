@@ -96,17 +96,18 @@ const MOCK_MENUS = [
 let calendarObj = null;
 
 function getPlatformColor(platform) {
+  const p = (platform || "").toLowerCase().trim();
   const colors = {
-    'Forkable': '#6366f1',   // Indigo
-    'ezCater': '#f59e0b',    // Amber
-    'Cater2.me': '#ec4899',  // Pink
-    'ClubFeast': '#10b981',  // Emerald
-    'Hungry': '#8b5cf6',     // Violet
-    'DoorDash': '#ef4444',   // Red
-    'Uber Eats': '#06b6d4',  // Cyan
-    'Direct': '#94a3b8'      // Slate
+    'forkable': '#6366f1',
+    'ezcater': '#f59e0b',
+    'cater2.me': '#ec4899',
+    'clubfeast': '#10b981',
+    'hungry': '#8b5cf6',
+    'doordash': '#ef4444',
+    'uber eats': '#06b6d4',
+    'direct': '#94a3b8'
   };
-  return colors[platform] || '#3b82f6'; // Default Blue
+  return colors[p] || '#3b82f6'; // Default Blue
 }
 
 function initCalendar() {
