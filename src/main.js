@@ -122,7 +122,7 @@ function initCalendar() {
   calendarObj.render();
 }
 
-function switchTab(tabName, pushState = true) {
+function switchTab(tabName, updateHash = true) {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.classList.remove('active');
     if (btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
@@ -137,8 +137,8 @@ function switchTab(tabName, pushState = true) {
   const prettyName = tabName.charAt(0).toUpperCase() + tabName.slice(1);
   document.title = `${prettyName} | HSCaterHub`;
 
-  if (pushState) {
-    window.history.pushState({ tab: tabName }, "", `/${tabName}`);
+  if (updateHash) {
+    window.location.hash = `#/${tabName}`;
   }
 
   if (tabName === 'calendar') {
@@ -155,20 +155,21 @@ document.querySelectorAll('.nav-item').forEach(button => {
   });
 });
 
-window.addEventListener('popstate', (event) => {
-  if (event.state && event.state.tab) {
-    switchTab(event.state.tab, false);
-  }
+window.addEventListener('hashchange', () => {
+  handleInitialRouting();
 });
 
 // Initial Load Routing
 function handleInitialRouting() {
-  const path = window.location.pathname.replace('/', '');
+  const hash = window.location.hash.replace('#/', '');
   const validTabs = ['dashboard', 'calendar', 'orders', 'prep', 'menus', 'crawlers'];
-  if (validTabs.includes(path)) {
-    switchTab(path, false);
+  if (validTabs.includes(hash)) {
+    switchTab(hash, false);
   } else {
-    switchTab('orders', true); // Default
+    // Default if no valid hash
+    if (!window.location.hash) {
+      switchTab('orders', true);
+    }
   }
 }
 
