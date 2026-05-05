@@ -110,10 +110,9 @@ async function run() {
         const lookbackDate = new Date();
         lookbackDate.setDate(lookbackDate.getDate() - 7); 
         
-        // Optimization 2: Filter server-side for DoorDash specifically
         const searchCriteria = [
             ['SINCE', lookbackDate],
-            ['HEADER', 'SUBJECT', 'doordash']
+            ['HEADER', 'SUBJECT', 'catering']
         ];
         
         const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false };
