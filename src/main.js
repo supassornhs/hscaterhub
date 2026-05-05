@@ -122,30 +122,57 @@ function initCalendar() {
   calendarObj.render();
 }
 
+function switchTab(tabName, pushState = true) {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.classList.remove('active');
+    if (btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
+  });
+
+  document.querySelectorAll('.tab-content').forEach(tab => {
+    tab.classList.remove('active');
+    if (tab.id === `${tabName}-tab`) tab.classList.add('active');
+  });
+
+  // Update Title
+  const prettyName = tabName.charAt(0).toUpperCase() + tabName.slice(1);
+  document.title = `${prettyName} | HSCaterHub`;
+
+  if (pushState) {
+    window.history.pushState({ tab: tabName }, "", `/${tabName}`);
+  }
+
+  if (tabName === 'calendar') {
+    setTimeout(() => {
+      if (!calendarObj) initCalendar();
+      else calendarObj.updateSize();
+    }, 100);
+  }
+}
+
 document.querySelectorAll('.nav-item').forEach(button => {
   button.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-
-    button.classList.add('active');
-    const tabId = button.getAttribute('data-tab') + '-tab';
-    document.getElementById(tabId).classList.add('active');
-    
-    // Update Browser Tab Title
-    const tabName = button.querySelector('.nav-text').innerText;
-    document.title = `${tabName} catering.holyshred.co`;
-    
-    if (tabId === 'calendar-tab') {
-      setTimeout(() => {
-        if (!calendarObj) {
-          initCalendar();
-        } else {
-          calendarObj.updateSize();
-        }
-      }, 50);
-    }
+    switchTab(button.getAttribute('data-tab'));
   });
 });
+
+window.addEventListener('popstate', (event) => {
+  if (event.state && event.state.tab) {
+    switchTab(event.state.tab, false);
+  }
+});
+
+// Initial Load Routing
+function handleInitialRouting() {
+  const path = window.location.pathname.replace('/', '');
+  const validTabs = ['dashboard', 'calendar', 'orders', 'prep', 'menus', 'crawlers'];
+  if (validTabs.includes(path)) {
+    switchTab(path, false);
+  } else {
+    switchTab('orders', true); // Default
+  }
+}
+
+handleInitialRouting();
 
 
 
