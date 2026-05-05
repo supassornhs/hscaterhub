@@ -83,65 +83,138 @@ const AUTH_FILE = './clubfeast_auth.json';
         process.exit(1);
     }
   
-    console.log("\n🔍 Logging in successful! Preparing deep-link Order Extraction...");
-  
+    console.log("\n🔍 Logging in successful! Detecting locations...");
+    
+    // Detect all locations from the dropdown
+    let locations = await page.evaluate(() => {
+        const dropdownTrigger = document.querySelector('header div[style*="cursor: pointer"]');
+        if (!dropdownTrigger) return [];
+        
+        // Try to click to open if not already open (though we'll just look for the list if possible)
+        // For reliability, we'll look for elements that look like location items
+        const locationItems = Array.from(document.querySelectorAll('div')).filter(el => {
+            const text = el.innerText || "";
+            return (text.includes('Geary St') || text.includes('Tennessee St')) && el.parentElement?.style?.position === 'absolute';
+        });
+        
+        if (locationItems.length === 0) {
+            // Try to find the trigger and click it to see what happens
+            return ["Default"]; 
+        }
+        return locationItems.map(li => li.innerText.split('\n')[0].trim());
+    });
+
+    // If we couldn't detect locations, just proceed with the current one
+    if (locations.length === 0) locations = ["Current Location"];
+    
+    console.log(`📍 Detected ${locations.length} locations: ${locations.join(', ')}`);
+
     let orderLinks = new Map();
-  
-    await new Promise(r => setTimeout(r, 5000));
-    
-    let currentLinks = await page.evaluate(() => {
-       let links = [];
-       function collectLinks(root) {
-         root.querySelectorAll('a').forEach(a => {
-           if (a.href && (a.href.includes('/orders/') || a.href.includes('/packages/'))) {
-              links.push(a.href);
+
+    for (let locIdx = 0; locIdx < locations.length; locIdx++) {
+        const locName = locations[locIdx];
+        console.log(`\n🏢 Switching to location: ${locName}...`);
+        
+        if (locations.length > 1) {
+            await page.evaluate((idx) => {
+                const trigger = document.querySelector('header div[style*="cursor: pointer"]');
+                if (trigger) trigger.click();
+            }, locIdx);
+            await new Promise(r => setTimeout(r, 2000));
+            
+            const switched = await page.evaluate((idx) => {
+                const items = Array.from(document.querySelectorAll('div')).filter(el => {
+                    const text = el.innerText || "";
+                    return (text.includes('Geary St') || text.includes('Tennessee St')) && el.parentElement?.style?.position === 'absolute';
+                });
+                if (items[idx]) {
+                    items[idx].click();
+                    return true;
+                }
+                return false;
+            }, locIdx);
+            
+            if (switched) {
+                console.log(`   └─ Switched to ${locName}. Waiting for load...`);
+                await new Promise(r => setTimeout(r, 8000));
+            }
+        }
+
+        // --- SCRAPE OPEN ORDERS ---
+        console.log(`   └─ Scraping 'Open' orders for ${locName}...`);
+        await page.evaluate(() => {
+            let clicked = false;
+            function searchTabs(root) {
+                root.querySelectorAll('span, div, button, a, li, p').forEach(el => {
+                    if (!clicked && el.innerText && el.innerText.trim() === 'Open') {
+                        el.click();
+                        clicked = true;
+                    }
+                });
+                root.querySelectorAll('*').forEach(el => {
+                    if (el.shadowRoot) searchTabs(el.shadowRoot);
+                });
+            }
+            searchTabs(document);
+        });
+        await new Promise(r => setTimeout(r, 4000));
+
+        let openLinks = await page.evaluate(() => {
+           let links = [];
+           function collectLinks(root) {
+             root.querySelectorAll('a').forEach(a => {
+               if (a.href && (a.href.includes('/orders/') || a.href.includes('/packages/'))) {
+                  links.push(a.href);
+               }
+             });
+             root.querySelectorAll('*').forEach(el => {
+               if (el.shadowRoot) collectLinks(el.shadowRoot);
+             });
            }
-         });
-         root.querySelectorAll('*').forEach(el => {
-           if (el.shadowRoot) collectLinks(el.shadowRoot);
-         });
-       }
-       collectLinks(document);
-       return links;
-    });
-    currentLinks.forEach(l => orderLinks.set(l, 'New'));
-    console.log(`✅ Found ${currentLinks.length} active 'New' order routes.`);
-  
-    await page.evaluate(() => {
-       let clicked = false;
-       function searchTabs(root) {
-          root.querySelectorAll('span, div, button, a, li, p').forEach(el => {
-             if (!clicked && el.innerText && el.innerText.trim() === 'Finalized') {
-                el.click();
-                clicked = true;
-             }
-          });
-          root.querySelectorAll('*').forEach(el => {
-             if (el.shadowRoot) searchTabs(el.shadowRoot);
-          });
-       }
-       searchTabs(document);
-    });
-    
-    await new Promise(r => setTimeout(r, 6000));
-    
-    let finalizedLinks = await page.evaluate(() => {
-       let links = [];
-       function collectLinks(root) {
-         root.querySelectorAll('a').forEach(a => {
-           if (a.href && (a.href.includes('/orders/') || a.href.includes('/packages/'))) {
-              links.push(a.href);
+           collectLinks(document);
+           return links;
+        });
+        openLinks.forEach(l => orderLinks.set(l, 'New'));
+        console.log(`   └─ Found ${openLinks.length} 'Open' order routes.`);
+
+        // --- SCRAPE FINALIZED ORDERS ---
+        console.log(`   └─ Scraping 'Finalized' orders for ${locName}...`);
+        await page.evaluate(() => {
+           let clicked = false;
+           function searchTabs(root) {
+              root.querySelectorAll('span, div, button, a, li, p').forEach(el => {
+                 if (!clicked && el.innerText && el.innerText.trim() === 'Finalized') {
+                    el.click();
+                    clicked = true;
+                 }
+              });
+              root.querySelectorAll('*').forEach(el => {
+                 if (el.shadowRoot) searchTabs(el.shadowRoot);
+              });
            }
-         });
-         root.querySelectorAll('*').forEach(el => {
-           if (el.shadowRoot) collectLinks(el.shadowRoot);
-         });
-       }
-       collectLinks(document);
-       return links;
-    });
-    finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
-    console.log(`✅ Found ${finalizedLinks.length} active 'Finalized' order routes.`);
+           searchTabs(document);
+        });
+        
+        await new Promise(r => setTimeout(r, 6000));
+        
+        let finalizedLinks = await page.evaluate(() => {
+           let links = [];
+           function collectLinks(root) {
+             root.querySelectorAll('a').forEach(a => {
+               if (a.href && (a.href.includes('/orders/') || a.href.includes('/packages/'))) {
+                  links.push(a.href);
+               }
+             });
+             root.querySelectorAll('*').forEach(el => {
+               if (el.shadowRoot) collectLinks(el.shadowRoot);
+             });
+           }
+           collectLinks(document);
+           return links;
+        });
+        finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
+        console.log(`   └─ Found ${finalizedLinks.length} 'Finalized' order routes.`);
+    }ed' order routes.`);
 
     let initialLinks = Array.from(orderLinks.keys());
     let idMap = {};
