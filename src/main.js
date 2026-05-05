@@ -95,6 +95,20 @@ const MOCK_MENUS = [
 // Tab Switching Logic
 let calendarObj = null;
 
+function getPlatformColor(platform) {
+  const colors = {
+    'Forkable': '#6366f1',   // Indigo
+    'ezCater': '#f59e0b',    // Amber
+    'Cater2.me': '#ec4899',  // Pink
+    'ClubFeast': '#10b981',  // Emerald
+    'Hungry': '#8b5cf6',     // Violet
+    'DoorDash': '#ef4444',   // Red
+    'Uber Eats': '#06b6d4',  // Cyan
+    'Direct': '#94a3b8'      // Slate
+  };
+  return colors[platform] || '#3b82f6'; // Default Blue
+}
+
 function initCalendar() {
   const calendarEl = document.getElementById('calendar');
   if (!calendarEl) return;
@@ -110,6 +124,9 @@ function initCalendar() {
       id: o.fbId,
       title: `${o.platform} - ${o.id}`,
       start: o.deliveryDate,
+      backgroundColor: getPlatformColor(o.platform) + '33', // 20% opacity for glass effect
+      borderColor: getPlatformColor(o.platform),
+      textColor: '#ffffff',
       extendedProps: { order: o }
     })),
     dayMaxEvents: false,
