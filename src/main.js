@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import './index.css';
 import { db, storage } from './firebase.js';
 import { collection, onSnapshot, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
@@ -5,6 +6,136 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 let orders = [];
 let menuItems = [];
+const menuPlatforms = ['Cater2.me', 'ClubFeast', 'Direct', 'DoorDash', 'ezCater', 'Fooda', 'Foodja', 'Forkable', 'Hungry', 'Uber Eats', 'Zerocater'];
+
+// Excel Export/Import Logic
+document.getElementById('export-menus-btn')?.addEventListener('click', () => {
+    if (menuItems.length === 0) {
+        alert("No menu items to export.");
+        return;
+    }
+
+    const data = menuItems.map(item => {
+        const row = {
+            'Category': item.category || '',
+            'Menu Name': item.title || '',
+            'Description': item.desc || '',
+            'Ingredients': item.ingredient || '',
+            'Allergens': (Array.isArray(item.allergens) ? item.allergens.join(', ') : item.allergens) || '',
+            'Toppings': (Array.isArray(item.toppings) ? item.toppings.join(', ') : item.toppings) || '',
+            'Sauces': (Array.isArray(item.sauce) ? item.sauce.join(', ') : item.sauce) || '',
+            'Base': (Array.isArray(item.base) ? item.base.join(', ') : item.base) || '',
+            'Proteins': (Array.isArray(item.proteins) ? item.proteins.join(', ') : item.proteins) || '',
+            'Standard Serving': item.serving || '',
+            'Standard Price': item.standardPrice || '',
+            'Cooked Weight (G)': item.weightG || '',
+            'Spicy Level': item.spicyLevel || '0',
+            'Vegan': item.dietary?.vegan ? 'YES' : '',
+            'Vegetarian': item.dietary?.vegetarian ? 'YES' : '',
+            'GF': item.dietary?.gf ? 'YES' : '',
+            'Soy Free': item.dietary?.soy ? 'YES' : '',
+            'Sesame Free': item.dietary?.sesame ? 'YES' : '',
+            'Nut Free': item.dietary?.nut ? 'YES' : '',
+            'Dairy Free': item.dietary?.dairy ? 'YES' : '',
+            'Egg Free': item.dietary?.egg ? 'YES' : '',
+            'Shellfish Free': item.dietary?.shellfish ? 'YES' : '',
+            'Seafood Free': item.dietary?.seafood ? 'YES' : ''
+        };
+
+        // Platform Overrides
+        menuPlatforms.forEach(p => {
+            const ov = item.platformOverrides?.[p] || {};
+            row[`${p} Alias`] = ov.alias || '';
+            row[`${p} Price`] = ov.price || '';
+            row[`${p} Note`] = ov.note || '';
+            row[`${p} Serving`] = ov.serving || '';
+        });
+
+        return row;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Menus");
+    XLSX.writeFile(workbook, "HolyShred_Menus.xlsx");
+});
+
+document.getElementById('import-menus-btn')?.addEventListener('click', () => {
+    document.getElementById('menu-import-file').click();
+});
+
+document.getElementById('menu-import-file')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const rows = XLSX.utils.sheet_to_json(ws);
+
+        if (confirm(`Are you sure you want to import ${rows.length} items? This will match by "Menu Name" and update existing items or create new ones.`)) {
+            for (const row of rows) {
+                const title = row['Menu Name'];
+                if (!title) continue;
+
+                const existing = menuItems.find(m => m.title === title);
+                const dietary = {
+                    vegan: row['Vegan'] === 'YES',
+                    vegetarian: row['Vegetarian'] === 'YES',
+                    gf: row['GF'] === 'YES',
+                    soy: row['Soy Free'] === 'YES',
+                    sesame: row['Sesame Free'] === 'YES',
+                    nut: row['Nut Free'] === 'YES',
+                    dairy: row['Dairy Free'] === 'YES',
+                    egg: row['Egg Free'] === 'YES',
+                    shellfish: row['Shellfish Free'] === 'YES',
+                    seafood: row['Seafood Free'] === 'YES'
+                };
+
+                const overrides = {};
+                menuPlatforms.forEach(p => {
+                    overrides[p] = {
+                        alias: row[`${p} Alias`] || '',
+                        price: row[`${p} Price`] || '',
+                        note: row[`${p} Note`] || '',
+                        serving: row[`${p} Serving`] || ''
+                    };
+                });
+
+                const payload = {
+                    category: row['Category'] || '',
+                    title: title,
+                    desc: row['Description'] || '',
+                    ingredient: row['Ingredients'] || '',
+                    allergens: row['Allergens'] ? row['Allergens'].split(',').map(s => s.trim()) : [],
+                    toppings: row['Toppings'] ? row['Toppings'].split(',').map(s => s.trim()) : [],
+                    sauce: row['Sauces'] ? row['Sauces'].split(',').map(s => s.trim()) : [],
+                    base: row['Base'] ? row['Base'].split(',').map(s => s.trim()) : [],
+                    proteins: row['Proteins'] ? row['Proteins'].split(',').map(s => s.trim()) : [],
+                    serving: row['Standard Serving'] || '',
+                    standardPrice: row['Standard Price'] || '',
+                    weightG: row['Cooked Weight (G)'] || '',
+                    spicyLevel: row['Spicy Level'] || '0',
+                    dietary: dietary,
+                    platformOverrides: overrides,
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (existing) {
+                    await updateDoc(doc(db, 'menus', existing.fbId), payload);
+                } else {
+                    await addDoc(collection(db, 'menus'), payload);
+                }
+            }
+            alert("Import completed successfully!");
+            e.target.value = ''; // Reset input
+        }
+    };
+    reader.readAsBinaryString(file);
+});
 
 export function normalizePlatform(rawPlatform) {
   if (!rawPlatform) return 'Unknown';
@@ -627,9 +758,7 @@ function renderMenus(filter = 'all') {
       <td>${item.category || ''}</td>
       <td style="font-weight: 600;">${item.title || ''}</td>
       <td style="font-weight: bold; color: #6ee7b7;">$${item.standardPrice || '0.00'}</td>
-      <td style="font-size: 0.85rem; white-space: normal;">${basePro}</td>
-      <td>${item.weightG || ''}</td>
-      <td style="font-size: 1.1rem;">${getSpicyIcon(item.spicyLevel)}</td>
+      <td>${item.serving || ''}</td>
       <td style="text-align: center;">${isDiet('vegan')}</td>
       <td style="text-align: center;">${isDiet('vegetarian')}</td>
       <td style="text-align: center;">${isDiet('gf')}</td>
@@ -798,9 +927,9 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
             if (el.value) el.dataset.dirty = "true";
           }
         });
-        document.querySelectorAll('#platform-details-container .platform-weight').forEach(el => {
+        document.querySelectorAll('#platform-details-container .platform-serving').forEach(el => {
           const p = el.getAttribute('data-platform');
-          if (item.platformOverrides[p]) el.value = item.platformOverrides[p].weight || '';
+          if (item.platformOverrides[p]) el.value = item.platformOverrides[p].serving || '';
         });
       }
       
@@ -983,8 +1112,6 @@ const platformDetailsContainer = document.getElementById('platform-details-conta
 const menuWeightG = document.getElementById('menu-weight-g');
 const menuPrice = document.getElementById('menu-price');
 
-const menuPlatforms = ['Cater2.me', 'ClubFeast', 'Direct', 'DoorDash', 'ezCater', 'Fooda', 'Foodja', 'Forkable', 'Hungry', 'Uber Eats', 'Zerocater'];
-
 // Generate platform rows
 function initPlatformRows() {
   platformDetailsContainer.innerHTML = '';
@@ -1004,7 +1131,7 @@ function initPlatformRows() {
       <input type="text" class="platform-alias" data-platform="${p}" placeholder="Alias Name..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
       <input type="text" class="platform-note" data-platform="${p}" placeholder="Special Note..." style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
       <input type="number" step="0.01" class="platform-price" data-platform="${p}" placeholder="Price ($)" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: var(--text-primary); outline: none; font-size: 0.8rem;" />
-      <input type="number" class="platform-weight" data-platform="${p}" placeholder="Weight (g)" title="Custom weight for this platform" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: #6ee7b7; outline: none; font-size: 0.8rem;" />
+      <input type="number" class="platform-serving" data-platform="${p}" placeholder="Serving Size" title="Custom serving size for this platform" style="width: 100%; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 0.5rem; border-radius: 8px; color: #818cf8; outline: none; font-size: 0.8rem;" />
     `;
     platformDetailsContainer.appendChild(row);
   });
@@ -1097,10 +1224,10 @@ addMenuForm.addEventListener('submit', async (e) => {
     if (!overrides[plat]) overrides[plat] = {};
     overrides[plat].price = el.value;
   });
-  document.querySelectorAll('#platform-details-container .platform-weight').forEach(el => {
+  document.querySelectorAll('#platform-details-container .platform-serving').forEach(el => {
     const plat = el.getAttribute('data-platform');
     if (!overrides[plat]) overrides[plat] = {};
-    overrides[plat].weight = el.value;
+    overrides[plat].serving = el.value;
   });
 
   const payload = {
@@ -1320,6 +1447,7 @@ function renderPrepTab() {
     let dishMap = {}; // { "Shredded Chicken Noodle___Notes": { name: "Shredded Chicken Noodle", notes: "...", qty: 2, servings: 2, menuRef: {...} } }
 
     targetOrders.forEach(o => {
+        const plat = normalizePlatform(o.platform);
         if (o.items && Array.isArray(o.items)) {
             o.items.forEach(itm => {
                 let baseName = getOfficialDishName(itm.name);
@@ -1330,23 +1458,27 @@ function renderPrepTab() {
                 
                 if (!dishMap[key]) dishMap[key] = { baseName: baseName, notes: notes, qty: 0, servings: 0, menuRef: null };
                 dishMap[key].qty += q;
+
+                // Compute servings immediately using platform context
+                let menuMatch = menuItems.find(m => m.title === baseName);
+                if (menuMatch) {
+                    dishMap[key].menuRef = menuMatch;
+                    let servMult = 1;
+                    if (menuMatch.platformOverrides && menuMatch.platformOverrides[plat] && menuMatch.platformOverrides[plat].serving) {
+                        servMult = parseInt(menuMatch.platformOverrides[plat].serving) || 1;
+                    } else {
+                        servMult = parseInt(menuMatch.serving) || 1;
+                    }
+                    dishMap[key].servings += (q * servMult);
+                } else {
+                    dishMap[key].servings += q;
+                }
             });
         }
     });
 
-    // Resolve menu bindings to compute pure servings
-    Object.keys(dishMap).forEach(key => {
-        let dish = dishMap[key];
-        let menuMatch = menuItems.find(m => m.title === dish.baseName);
-
-        if (menuMatch) {
-            dish.menuRef = menuMatch;
-            let servMult = parseInt(menuMatch.serving) || 1;
-            dish.servings = dish.qty * servMult;
-        } else {
-            dish.servings = dish.qty; // Default 1:1 if unknown
-        }
-    });
+    // Remove the separate resolution loop as we now do it in one pass
+    // (Old lines 1328-1339 are gone)
 
     if (currentPrepView === 'dish') {
         const tbody = document.getElementById('prep-dish-tbody');

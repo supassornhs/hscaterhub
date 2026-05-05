@@ -169,7 +169,12 @@
           <div class="glass-panel">
             <div class="table-header-flex">
               <h3>Platform Menus</h3>
-              <button id="add-menu-btn" class="primary-btn">+ Add Menu</button>
+              <div style="display: flex; gap: 0.75rem;">
+                <button id="export-menus-btn" class="secondary-btn" style="background: #1e293b; color: white; border: 1px solid rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px;">⬇️ Export Excel</button>
+                <button id="import-menus-btn" class="secondary-btn" style="background: #1e293b; color: white; border: 1px solid rgba(255,255,255,0.1); padding: 0.5rem 1rem; border-radius: 8px;">⬆️ Import Excel</button>
+                <input type="file" id="menu-import-file" accept=".xlsx, .xls" style="display: none;" />
+                <button id="add-menu-btn" class="primary-btn">+ Add Menu</button>
+              </div>
             </div>
             <div class="filters">
               <select id="category-filter">
@@ -187,9 +192,7 @@
                     <th>Category</th>
                     <th>Menu Name</th>
                     <th>Standard Price</th>
-                    <th>Base & Proteins</th>
-                    <th>Weight (g)</th>
-                    <th>Spicy Level</th>
+                    <th>Serving Size</th>
                     <th>Vegan</th>
                     <th>Veg</th>
                     <th>GF</th>
