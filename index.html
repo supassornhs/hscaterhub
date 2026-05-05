@@ -176,7 +176,7 @@
                 <button id="add-menu-btn" class="primary-btn">+ Add Menu</button>
               </div>
             </div>
-            <div class="filters">
+            <div class="filters" style="display: flex; gap: 1rem; align-items: center;">
               <select id="category-filter">
                 <option value="all">All Categories</option>
                 <option value="individualbox">Individual Box</option>
@@ -184,6 +184,10 @@
                 <option value="sauce">Sauce</option>
                 <option value="beverage">Beverage</option>
               </select>
+              <div style="position: relative; flex: 1; max-width: 300px;">
+                <span style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 0.9rem;">🔍</span>
+                <input type="text" id="menu-search-input" placeholder="Search items..." style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: white; padding: 0.5rem 0.75rem 0.5rem 2.25rem; border-radius: 8px; outline: none; font-size: 0.9rem;" />
+              </div>
             </div>
             <div class="table-wrapper" style="margin-top: 1.5rem;">
               <table class="dashboard-table">

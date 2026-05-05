@@ -731,14 +731,15 @@ document.getElementById('close-panel-btn').addEventListener('click', closeOrderD
 document.getElementById('order-modal-overlay').addEventListener('click', closeOrderDetails);
 
 // Render Menu Items
-function renderMenus(filter = 'all') {
+function renderMenus(filter = 'all', search = '') {
   const tbody = document.getElementById('menu-table-body');
   if (!tbody) return;
   tbody.innerHTML = '';
 
   const filtered = menuItems.filter(item => {
-    if (filter === 'all') return true;
-    return item.category && item.category.toLowerCase().replace(' ', '') === filter;
+    const matchesFilter = filter === 'all' || (item.category && item.category.toLowerCase().replace(/\s+/g, '') === filter);
+    const matchesSearch = !search || (item.title && item.title.toLowerCase().includes(search.toLowerCase()));
+    return matchesFilter && matchesSearch;
   });
 
   filtered.forEach(item => {
@@ -947,7 +948,11 @@ document.getElementById('menu-table-body').addEventListener('click', async (e) =
 
 // Filter Dropdown
 document.getElementById('category-filter').addEventListener('change', (e) => {
-  renderMenus(e.target.value);
+  renderMenus(e.target.value, document.getElementById('menu-search-input').value);
+});
+
+document.getElementById('menu-search-input').addEventListener('input', (e) => {
+  renderMenus(document.getElementById('category-filter').value, e.target.value);
 });
 
 document.getElementById('orders-platform-filter')?.addEventListener('change', renderOrders);
