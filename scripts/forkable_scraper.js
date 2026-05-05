@@ -34,13 +34,19 @@ const db = getFirestore(firebaseApp);
     });
     await page.setCookie(...cookies);
 
-    // 2. Define target dates (Current Week)
-    const dates = [
-        "2026-04-27", 
-        "2026-04-28", 
-        "2026-04-29", 
-        "2026-04-30"
-    ];
+    // 2. Define target dates (Current Week: Monday to Friday)
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 (Sun) to 6 (Sat)
+    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust to Monday
+    const monday = new Date(today.setDate(diff));
+    
+    const dates = [];
+    for (let i = 0; i < 5; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        dates.push(d.toISOString().split('T')[0]);
+    }
+    console.log(`📅 Target Dates for this week: ${dates.join(', ')}`);
 
     for (const date of dates) {
         const targetUrl = `https://forkable.com/fpp/2297/${date}/17201`;
