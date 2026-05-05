@@ -131,6 +131,10 @@ document.querySelectorAll('.nav-item').forEach(button => {
     const tabId = button.getAttribute('data-tab') + '-tab';
     document.getElementById(tabId).classList.add('active');
     
+    // Update Browser Tab Title
+    const tabName = button.querySelector('.nav-text').innerText;
+    document.title = `${tabName} catering.holyshred.co`;
+    
     if (tabId === 'calendar-tab') {
       setTimeout(() => {
         if (!calendarObj) {
