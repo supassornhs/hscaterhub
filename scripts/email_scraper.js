@@ -65,33 +65,42 @@ async function processDoordashEmail(text) {
     
     if (!subjectMatch) return;
 
-    let customerName = subjectMatch[1].trim();
+    // 2. Order ID Detection
     let orderIdFromSub = subjectMatch[2] || "";
-    
-    // 2. Fallback: If no Order ID in subject, try to find it in the body (e.g. "Order ID: 123456789")
     if (!orderIdFromSub) {
-        const idMatch = text.match(/Order (?:ID|Number):\s*([a-zA-Z0-9]+)/i) || text.match(/ID:\s*([a-zA-Z0-9]{5,})/i);
+        // Look for "Order number 0a31f8e1" or "Order ID: 12345"
+        const idMatch = text.match(/Order (?:number|id|num)\s*:?\s*([a-zA-Z0-9]+)/i) || 
+                        text.match(/(?:ID|Number):\s*([a-zA-Z0-9]+)/i);
         if (idMatch) orderIdFromSub = idMatch[1];
-        else orderIdFromSub = Math.random().toString(36).substring(2, 7).toUpperCase(); // Last resort random ID
+        else orderIdFromSub = Math.random().toString(36).substring(2, 7).toUpperCase();
     }
 
     let cleanDate = new Date();
-    
-    // 3. Try to parse delivery date and time from body
-    // Example: "Arriving at 11:30 AM on Tuesday, May 5, 2026"
     let deliveryTime = "12:00 PM";
     let deliveryDateStr = `${cleanDate.getFullYear()}-${(cleanDate.getMonth() + 1).toString().padStart(2, '0')}-${cleanDate.getDate().toString().padStart(2, '0')}`;
 
-    const timeMatch = text.match(/Arriving at\s*(\d+:\d+\s*(?:AM|PM))/i);
+    // 3. Time Detection (Pickup or Delivery)
+    const timeMatch = text.match(/(?:Estimated pickup time|Arriving at|Delivery time)\s*:?\s*(\d+:\d+\s*(?:AM|PM))/i);
     if (timeMatch) deliveryTime = timeMatch[1].toUpperCase();
 
-    const dateMatch = text.match(/(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s*([a-zA-Z]+\s+\d+,\s+\d{4})/i);
+    // 4. Date Detection
+    // Matches "Wed, May 6" or "Wednesday, May 6, 2026"
+    const dateMatch = text.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*([a-zA-Z]+\s+\d+)(?:,?\s*(\d{4}))?/i);
     if (dateMatch) {
-        const parsedDate = new Date(dateMatch[1]);
+        const monthDay = dateMatch[1];
+        const year = dateMatch[2] || new Date().getFullYear();
+        const parsedDate = new Date(`${monthDay}, ${year}`);
         if (!isNaN(parsedDate)) {
             deliveryDateStr = `${parsedDate.getFullYear()}-${(parsedDate.getMonth() + 1).toString().padStart(2, '0')}-${parsedDate.getDate().toString().padStart(2, '0')}`;
         }
     }
+
+    // 5. Item Count & Subtotal
+    const itemsMatch = text.match(/(\d+)\s*items/i);
+    const itemCount = itemsMatch ? parseInt(itemsMatch[1]) : 1;
+    
+    const subtotalMatch = text.match(/Subtotal\s*\$?(\d+\.\d{2})/i);
+    const subtotal = subtotalMatch ? parseFloat(subtotalMatch[1]) : 0;
 
     let orderId = `DD-${deliveryDateStr.replace(/-/g, '').substring(4)}-${orderIdFromSub}`;
 
@@ -104,10 +113,10 @@ async function processDoordashEmail(text) {
         deliveryTime: deliveryTime, 
         deliveryMethod: "Platform", 
         pickUpTime: deliveryTime, 
-        subtotal: 0, 
-        total: 0, 
+        subtotal: subtotal, 
+        total: subtotal, // Basic fallback
         status: "New", 
-        items: [{ name: "DoorDash Bundle", amount: 1, notes: "Parsed from 'Accept Order' Email" }],
+        items: [{ name: `DoorDash Order (${itemCount} items)`, amount: 1, notes: "Parsed from Email Summary" }],
         createdAt: new Date().toISOString(), 
         isDeleted: false
     };
