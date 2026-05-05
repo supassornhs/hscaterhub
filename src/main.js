@@ -838,6 +838,10 @@ if (dashStartEl && dashEndEl && !dashStartEl.value && !dashEndEl.value) {
 
 onSnapshot(collection(db, 'orders'), (snapshot) => {
   orders = snapshot.docs.map(doc => ({ fbId: doc.id, ...doc.data() })).filter(o => !o.isDeleted);
+  console.log("📡 Orders Synced from Firestore:", orders.length, "orders found.");
+  const dd = orders.find(o => o.platform === 'DoorDash');
+  if (dd) console.log("🔍 Found DoorDash Order in Sync:", dd);
+  
   orders.sort((a, b) => {
     let dateA = new Date(a.deliveryDate || 0);
     let dateB = new Date(b.deliveryDate || 0);

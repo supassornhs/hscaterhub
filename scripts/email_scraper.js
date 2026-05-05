@@ -76,19 +76,34 @@ async function processDoordashEmail(text) {
     }
 
     let cleanDate = new Date();
-    let month = (cleanDate.getMonth() + 1).toString().padStart(2, '0');
-    let day = cleanDate.getDate().toString().padStart(2, '0');
-    let orderId = `DD-${month}${day}-${orderIdFromSub}`;
+    
+    // 3. Try to parse delivery date and time from body
+    // Example: "Arriving at 11:30 AM on Tuesday, May 5, 2026"
+    let deliveryTime = "12:00 PM";
+    let deliveryDateStr = `${cleanDate.getFullYear()}-${(cleanDate.getMonth() + 1).toString().padStart(2, '0')}-${cleanDate.getDate().toString().padStart(2, '0')}`;
+
+    const timeMatch = text.match(/Arriving at\s*(\d+:\d+\s*(?:AM|PM))/i);
+    if (timeMatch) deliveryTime = timeMatch[1].toUpperCase();
+
+    const dateMatch = text.match(/(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s*([a-zA-Z]+\s+\d+,\s+\d{4})/i);
+    if (dateMatch) {
+        const parsedDate = new Date(dateMatch[1]);
+        if (!isNaN(parsedDate)) {
+            deliveryDateStr = `${parsedDate.getFullYear()}-${(parsedDate.getMonth() + 1).toString().padStart(2, '0')}-${parsedDate.getDate().toString().padStart(2, '0')}`;
+        }
+    }
+
+    let orderId = `DD-${deliveryDateStr.replace(/-/g, '').substring(4)}-${orderIdFromSub}`;
 
     let newOrder = {
         id: orderId, 
         platform: "DoorDash", 
         customerName: customerName,
         typeOfOrder: "Catering", 
-        deliveryDate: `${cleanDate.getFullYear()}-${month}-${day}`, 
-        deliveryTime: "12:00 PM", 
+        deliveryDate: deliveryDateStr, 
+        deliveryTime: deliveryTime, 
         deliveryMethod: "Platform", 
-        pickUpTime: "12:00 PM", 
+        pickUpTime: deliveryTime, 
         subtotal: 0, 
         total: 0, 
         status: "New", 
@@ -98,6 +113,7 @@ async function processDoordashEmail(text) {
     };
 
     await setDoc(doc(db, 'orders', orderId), newOrder, { merge: true });
+    console.log(`      ✅ Vaulted DoorDash Order: ${orderId} for ${customerName}`);
 }
 
 async function run() {
