@@ -298,7 +298,8 @@ const AUTH_FILE = './clubfeast_auth.json';
         } catch (e) {}
         await new Promise(r => setTimeout(r, 4000));
         
-        const orderDataRaw = await page.evaluate(() => {
+        const routeId = route.split('/orders/')[1].split('?')[0];
+        const orderDataRaw = await page.evaluate((forcedId) => {
             function collectText(root) {
               let text = '';
               if (root.innerText) text += root.innerText;
@@ -307,12 +308,10 @@ const AUTH_FILE = './clubfeast_auth.json';
               });
               return text;
             }
-            let textObject = collectText(document.body) || "";
+            let textObject = (collectText(document.body) || "").replace(/Customer Request:/g, '\nCustomer Request:');
             
-            const idMatch = textObject.match(/(#[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+)/) || textObject.match(/([A-Z0-9]{3}-L\d{6}-[A-Z0-9]{4})/);
-            let urlId = null;
-            try { urlId = window.location.href.split('/orders/')[1].split('?')[0]; } catch(e){}
-            let orderId = idMatch ? idMatch[1].replace('#', '') : (urlId ? urlId.replace('#', '') : null);
+            // Prioritize the ID passed from the Node.js context (from the URL)
+            let orderId = forcedId.replace('#', '');
             if (!orderId) return null;
   
             function collectElements(root) {
@@ -345,16 +344,25 @@ const AUTH_FILE = './clubfeast_auth.json';
             }
   
             let formattedDate = null;
-            const dateMatch = textObject.match(/[A-Z][a-z]+day,\s[A-Z][a-z]+\s\d{1,2}(st|nd|rd|th)?,\s20\d{2}/) || textObject.match(/\d{1,2}\/\d{1,2}\/\d{4}/);
+            // Try to match full weekday format e.g., "Thursday, July 5th, 2026"
+            const fullDateMatch = textObject.match(/[A-Z][a-z]+day,\s[A-Z][a-z]+\s\d{1,2}(st|nd|rd|th)?,\s20\d{2}/);
+            // Match simple month day, year format e.g., "May 5, 2026"
+            const simpleDateMatch = textObject.match(/[A-Z][a-z]+\s\d{1,2},\s20\d{2}/);
+            // Match numeric format MM/DD/YYYY
+            const numericDateMatch = textObject.match(/\d{1,2}\/\d{1,2}\/\d{4}/);
+            const dateMatch = fullDateMatch || simpleDateMatch || numericDateMatch;
             if (dateMatch) {
                 try {
-                    const dObj = new Date(dateMatch[0].replace(/(st|nd|rd|th)/, ''));
+                    // Remove ordinal suffixes if present
+                    const cleanStr = dateMatch[0].replace(/(st|nd|rd|th)/, '');
+                    const dObj = new Date(cleanStr);
                     if (!isNaN(dObj.getTime())) {
-                         formattedDate = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
+                        formattedDate = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
                     }
-                } catch(e) {}
+                } catch (e) {}
             }
             if (!formattedDate) {
+                // Fallback to URL param or orderId-derived date
                 let urlDateMatch = window.location.href.match(/date=(\d{4}-\d{2}-\d{2})/);
                 if (urlDateMatch) {
                     formattedDate = urlDateMatch[1];
@@ -372,13 +380,18 @@ const AUTH_FILE = './clubfeast_auth.json';
   
             const items = [];
             const lines = textObject.split('\n').map(l => l.trim()).filter(l => l);
-            for (let line of lines) {
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
                 if (line.match(/Subtotal:|Tax Amount|Order Total|Download Labels/i)) break;
+                
                 const qtyMatch = line.match(/^(\d+)\s*x\s*(.*)$/);
                 if (qtyMatch) {
                     let cleanName = qtyMatch[2].replace(/\s*\(\d+\s*pieces?\)/i, '').trim();
                     cleanName = cleanName.replace(/\bw\//gi, 'With ').replace(/\s*\(GF\)/gi, '').replace(/\s+/g, ' ').trim();
                     items.push({ amount: parseInt(qtyMatch[1], 10), name: cleanName, notes: "" });
+                } else if (line.includes('Customer Request:') && items.length > 0) {
+                    let note = line.replace('Customer Request:', '').trim();
+                    items[items.length - 1].notes = note;
                 }
             }
   
@@ -391,7 +404,7 @@ const AUTH_FILE = './clubfeast_auth.json';
                total: orderTotal,
                items: items
             };
-        });
+        }, routeId);
   
         if (orderDataRaw) {
             let finalItems = [];
@@ -410,7 +423,7 @@ const AUTH_FILE = './clubfeast_auth.json';
                         break;
                     }
                 }
-                finalItems.push({ name: cleanMainName, amount: item.amount, notes: "" });
+                finalItems.push({ name: cleanMainName, amount: item.amount, notes: item.notes });
             }
   
             let [y, m, d] = orderDataRaw.deliveryDate.split('-');

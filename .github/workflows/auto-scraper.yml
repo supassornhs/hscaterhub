@@ -8,6 +8,10 @@ on:
 jobs:
   scrape_orders:
     runs-on: ubuntu-latest
+    env:
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+      CI: true
     steps:
       - uses: actions/checkout@v4
         
@@ -20,9 +24,6 @@ jobs:
         run: npm install
         
       - name: Run Email Scraper
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
         run: node scripts/email_scraper.js
         continue-on-error: true
 

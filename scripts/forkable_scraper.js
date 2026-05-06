@@ -1,15 +1,16 @@
+import fs from 'fs';
 import puppeteer from 'puppeteer';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import * as dotenv from 'dotenv';
+import { sendAlertEmail } from './mailer.js';
+dotenv.config();
 
 // Firebase Configuration (from cater2me_scraper.js)
 const firebaseConfig = {
-    apiKey: "AIzaSyDE-Q0S8u4-V3w8X9yZ6Q1K2L3M4N5O6P",
+    apiKey: "AIzaSyCj__TCfYSF-1y4uR-UOId_aPWWwy4-W5A",
     authDomain: "hscaterhub.firebaseapp.com",
-    projectId: "hscaterhub",
-    storageBucket: "hscaterhub.appspot.com",
-    messagingSenderId: "1234567890",
-    appId: "1:1234567890:web:abcdef1234567890"
+    projectId: "hscaterhub"
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -19,114 +20,183 @@ const db = getFirestore(firebaseApp);
     console.log("🚀 Initializing Forkable Scraper (Production)...");
 
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: process.env.CI === 'true' ? "new" : false,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
 
-    // 1. Inject Authentication Cookies
-    console.log("🚀 Injecting cookies...");
-    const cookieStr = '_ga=GA1.1.83812787.1777371531; _hp5_event_props.3862836872=%7B%7D; __adroll_fpc=a82147249db68659448dc8351252e87b-1777371534444; hubspotutk=eec630b7bcbe0c4c5dff510b07a4ad46; __hstc=50334390.eec630b7bcbe0c4c5dff510b07a4ad46.1777372577246.1777457546396.1777483855261.4; _cs_c=0; _easyorder_session=977e2e72571f45963c29986aed47e3bb; _hp5_meta.3862836872=%7B%22userId%22%3A%221032165537040382%22%2C%22sessionId%22%3A%221033736246528743%22%2C%22sessionProperties%22%3A%7B%22time%22%3A1777535985606%2C%22id%22%3A%221033736246528743%22%2C%22initial_pageview_info%22%3A%7B%22time%22%3A1777535985606%2C%22id%22%3A%228221059348822095%22%2C%22title%22%3A%22Forkable%22%2C%22url%22%3A%7B%22domain%22%3A%22forkable.com%22%2C%22path%22%3A%22%2Ffpp%2F%22%2C%22query%22%3A%22%22%2C%22hash%22%3A%22%22%7D%7D%2C%22search_keyword%22%3A%22%22%2C%22referrer%22%3A%22%22%2C%22utm%22%3A%7B%22source%22%3A%22%22%2C%22medium%22%3A%22%22%2C%22term%22%3A%22%22%2C%22content%22%3A%22%22%2C%22campaign%22%3A%22%22%7D%7D%2C%22identity%22%3A%22359302%22%7D';
+    // 1. Fetch Authentication Cookies from Firebase
+    console.log("🚀 Fetching cookies from dashboard...");
+    const crawlerDoc = await getDoc(doc(db, 'system', 'crawlers'));
+    const cookieStr = crawlerDoc.exists() ? crawlerDoc.data()['Forkable']?.cookie : null;
+
+    if (!cookieStr) {
+        console.error("❌ No Forkable cookie found in Firebase! Please update it in the dashboard.");
+        await browser.close();
+        process.exit(1);
+    }
+
     const cookies = cookieStr.split(';').map(pair => {
-        const [name, value] = pair.trim().split('=');
-        return { name, value, domain: 'forkable.com' };
+        const [name, ...valueParts] = pair.trim().split('=');
+        return { name, value: valueParts.join('='), domain: 'forkable.com' };
     });
     await page.setCookie(...cookies);
 
-    // 2. Define target dates (Last 7 days to Next 7 days)
+    // 2. Define target dates (Last 3 days to Next 3 days)
     const dates = [];
-    for (let i = -7; i <= 7; i++) {
+    for (let i = -3; i <= 3; i++) {
         const d = new Date();
         d.setDate(d.getDate() + i);
         // Only scrape Monday to Friday
         if (d.getDay() >= 1 && d.getDay() <= 5) {
             dates.push(d.toISOString().split('T')[0]);
         }
-    }
-    // Remove duplicates and sort
+    }// Remove duplicates and sort
     const uniqueDates = [...new Set(dates)].sort();
     console.log(`📅 Target Dates for scraping window: ${uniqueDates.join(', ')}`);
 
     for (const date of uniqueDates) {
-        const targetUrl = `https://forkable.com/fpp/2297/${date}/17201`;
-        console.log(`📡 Accessing Direct URL: ${targetUrl}`);
-        await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-        
-        await new Promise(r => setTimeout(r, 15000)); 
-        await page.waitForFunction(() => {
-            const dayRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
-            const elements = Array.from(document.querySelectorAll('div, span, p'));
-            return elements.some(el => {
-                const txt = (el.innerText || "").trim();
-                const rect = el.getBoundingClientRect();
-                return dayRegex.test(txt) && rect.width > 0 && rect.height > 0 && txt.length < 100;
-            });
-        }, { timeout: 30000 });
-
-        const rowTargets = await page.evaluate(() => {
-            const dayRegex = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
-            const rows = Array.from(document.querySelectorAll('div, span, p, a, button')).filter(el => {
-                const txt = (el.innerText || "").trim();
-                const rect = el.getBoundingClientRect();
-                return dayRegex.test(txt) && rect.width > 200 && rect.height > 20 && txt.length < 100;
-            });
-            const r = rows.find(row => !rows.some(other => other !== row && row.contains(other)));
-            if (!r) return null;
-            r.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        try {
+            const targetUrl = `https://forkable.com/fpp/2297/${date}/17201`;
+            console.log(`📡 Accessing Direct URL: ${targetUrl}`);
+            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
             
-            const badge = r.querySelector('[class*="badge"], [class*="count"], .morning-count');
-            const rect = r.getBoundingClientRect();
-            const targets = [{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }];
-            if (badge) {
-                const bRect = badge.getBoundingClientRect();
-                targets.unshift({ x: bRect.x + bRect.width / 2, y: bRect.y + bRect.height / 2 });
+            // Wait a bit for JS to render
+            await new Promise(r => setTimeout(r, 10000)); 
+
+            // Check if we are actually on an order page or a login/empty page
+            const pageState = await page.evaluate(() => {
+                const text = document.body.innerText;
+                if (text.includes('Restaurant Login') || text.includes('Sign in') || document.querySelector('input[type="email"]')) return 'EXPIRED';
+                if (text.includes('not found')) return 'NOT_FOUND';
+                return 'OK';
+            });
+
+            if (pageState === 'EXPIRED') {
+                console.error("\n❌ FATAL ERROR: The Forkable Cookie is missing or expired.");
+                await setDoc(doc(db, 'system', 'crawlers'), { 'Forkable': { status: 'Expired', lastRun: new Date().toLocaleString() } }, { merge: true });
+                console.log("✉️ Dispatching Alert Email...");
+                await sendAlertEmail(db, 'Forkable');
+                console.log("✅ Alert Email logic triggered.");
+                await browser.close();
+                process.exit(1);
             }
-            return { targets, text: r.innerText };
+
+            if (pageState === 'NOT_FOUND') {
+                console.log(`   ⚠️ Date ${date} seems inaccessible (Not Found). Skipping.`);
+                continue;
+            }
+
+            try {
+                await page.waitForFunction(() => {
+                    const dayRegex = /(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
+                    const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4'));
+                    return elements.some(el => {
+                        const txt = (el.innerText || "").trim();
+                        const rect = el.getBoundingClientRect();
+                        return dayRegex.test(txt) && rect.width > 0 && rect.height > 0 && txt.length < 100;
+                    });
+                }, { timeout: 15000 });
+            } catch (e) {
+                console.log(`   ℹ️ No order rows detected for ${date} (Timeout).`);
+                if (!fs.existsSync('./scratch')) fs.mkdirSync('./scratch');
+                
+                const bodyPreview = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                console.log(`   📝 Page Content Preview: ${bodyPreview.replace(/\n/g, ' ')}...`);
+                
+                await page.screenshot({ path: `./scratch/forkable_timeout_${date}.png` });
+                console.log(`   📸 Saved debug screenshot to ./scratch/forkable_timeout_${date}.png`);
+                continue;
+            }
+
+        const alreadyExpanded = await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('a, button, div, span, .btn'));
+            return btns.some(el => {
+                const txt = (el.innerText || "").toLowerCase();
+                return (txt.includes('view order') || txt.includes('view completed order')) && el.getBoundingClientRect().width > 0;
+            });
         });
 
-        if (rowTargets && rowTargets.targets.length > 0) {
-            console.log(`   🖱️ Expanding row: "${rowTargets.text.substring(0, 30)}..."`);
-            for (const t of rowTargets.targets) {
-                await page.mouse.click(t.x, t.y);
-                await new Promise(r => setTimeout(r, 1000));
-            }
-        }
-        await new Promise(r => setTimeout(r, 8000));
+        if (!alreadyExpanded) {
+            const rowTargets = await page.evaluate(() => {
+                const dayRegex = /(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Za-z]+ \d+/i;
+                const rows = Array.from(document.querySelectorAll('div, span, p, a, button')).filter(el => {
+                    const txt = (el.innerText || "").trim();
+                    const rect = el.getBoundingClientRect();
+                    return dayRegex.test(txt) && rect.width > 50 && rect.height > 10 && txt.length < 100;
+                });
+                const r = rows.find(row => !rows.some(other => other !== row && row.contains(other)));
+                if (!r) return null;
+                r.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                
+                const badge = r.querySelector('[class*="badge"], [class*="count"], .morning-count');
+                const rect = r.getBoundingClientRect();
+                const targets = [{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }];
+                if (badge) {
+                    const bRect = badge.getBoundingClientRect();
+                    targets.unshift({ x: bRect.x + bRect.width / 2, y: bRect.y + bRect.height / 2 });
+                }
+                return { targets, text: r.innerText };
+            });
 
-        const sessionButtons = await page.evaluate(() => {
+            if (rowTargets && rowTargets.targets.length > 0) {
+                console.log(`   🖱️ Expanding row: "${rowTargets.text.substring(0, 30)}..."`);
+                for (const t of rowTargets.targets) {
+                    await page.mouse.click(t.x, t.y);
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+            await new Promise(r => setTimeout(r, 8000));
+        } else {
+            console.log(`   ✨ Row for ${date} already expanded.`);
+        }
+
+        const sessionLinks = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span, .btn'));
             const btns = elements.filter(el => {
                 const txt = (el.innerText || "").toLowerCase().trim();
                 const rect = el.getBoundingClientRect();
                 const isVisible = rect.width > 0 && rect.height > 0;
-                return isVisible && txt.length < 30 && (txt.includes('view order') || txt.includes('view completed order'));
+                return isVisible && txt.length < 35 && (txt.includes('view order') || txt.includes('view completed order'));
             });
             return btns.map(btn => {
                 const rect = btn.getBoundingClientRect();
-                return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, text: btn.innerText.trim() };
+                let href = null;
+                // Check if button itself is a link or has a link parent
+                if (btn.href) href = btn.href;
+                else {
+                    const parentLink = btn.closest('a');
+                    if (parentLink) href = parentLink.href;
+                }
+                return { 
+                    x: rect.x + rect.width / 2, 
+                    y: rect.y + rect.height / 2, 
+                    text: btn.innerText.trim(),
+                    href: href
+                };
             });
         });
 
-        if (sessionButtons.length === 0) {
+        if (sessionLinks.length === 0) {
             console.log(`   ⚠️ No session buttons found for ${date}.`);
             continue;
         }
 
-        console.log(`   🔎 Found ${sessionButtons.length} pickup sessions for ${date}. Processing...`);
+        console.log(`   🔎 Found ${sessionLinks.length} pickup sessions (e.g. Morning/Afternoon) for ${date}. Processing...`);
 
-        for (let sIdx = 0; sIdx < sessionButtons.length; sIdx++) {
-            // Re-fetch button positions if not first session (page might have shifted)
-            let targetBtn = sessionButtons[sIdx];
-            if (sIdx > 0) {
-                // Re-expand if collapsed (going back usually collapses)
-                // ... logic to re-expand ...
-                await new Promise(r => setTimeout(r, 2000));
+        for (let sIdx = 0; sIdx < sessionLinks.length; sIdx++) {
+            let session = sessionLinks[sIdx];
+            
+            if (session.href) {
+                console.log(`   🔗 Navigating directly to session: "${session.text}" -> ${session.href}`);
+                await page.goto(session.href, { waitUntil: 'networkidle2', timeout: 60000 });
+            } else {
+                console.log(`   🖱️ Clicking session button (no URL found): "${session.text}"`);
+                await page.mouse.click(session.x, session.y);
             }
-
-            console.log(`   🖱️ Clicking session ${sIdx + 1}/${sessionButtons.length}: "${targetBtn.text}"...`);
-            await page.mouse.click(targetBtn.x, targetBtn.y);
-            await new Promise(r => setTimeout(r, 15000)); 
+            
+            await new Promise(r => setTimeout(r, 12000)); 
 
             console.log(`   📜 Slow Scrolling for items...`);
             await page.evaluate(async () => {
@@ -205,47 +275,42 @@ const db = getFirestore(firebaseApp);
                         return;
                     }
 
-                    if (currentGroup && el.tagName === 'TR') {
-                        const cells = Array.from(el.querySelectorAll('td'));
-                        if (cells.length >= 2) {
-                            const dishName = cells[1].innerText.split('\n')[0].trim();
-                            const rawNotes = cells[1].innerText.split('\n').slice(1).join(', ').trim();
+                    if (currentGroup && (el.tagName === 'TR' || el.classList.contains('item-row') || el.classList.contains('order-item'))) {
+                        const cells = Array.from(el.querySelectorAll('td, div.cell, span.cell'));
+                        const dishNameEl = el.querySelector('.item-name, .dish-name') || cells[1] || cells[0];
+                        const dishName = (dishNameEl?.innerText || "").split('\n')[0].trim();
+                        const rawNotes = (dishNameEl?.innerText || "").split('\n').slice(1).join(', ').trim();
+                        
+                        let price = 0;
+                        const priceText = el.innerText.match(/\$\s*(\d+\.\d{2})/);
+                        if (priceText) price = parseFloat(priceText[1]);
+
+                        if (dishName && !dishName.toLowerCase().includes('subtotal') && !dishName.toLowerCase().includes('total') && !/^\d+$/.test(dishName)) {
+                            currentGroup.subtotal += price;
                             
-                            let price = 0;
-                            for (let i = cells.length - 1; i >= 1; i--) {
-                                if (cells[i].innerText.includes('$')) {
-                                    price = parseFloat(cells[i].innerText.replace('$', '').replace(/,/g, '').trim()) || 0;
-                                    break;
+                            let sides = [];
+                            let notes = [];
+                            const noteParts = rawNotes.split(/[\|,]/);
+                            noteParts.forEach(part => {
+                                const p = part.trim();
+                                if (!p || p.toLowerCase().includes('for:')) return;
+                                if (p.toLowerCase().includes('add side:')) {
+                                    const sideName = p.replace(/»?\s*Add Side:\s*/gi, '').trim();
+                                    sides.push(sideName);
+                                    currentGroup.sideAggregator[sideName] = (currentGroup.sideAggregator[sideName] || 0) + 1;
+                                } else {
+                                    notes.push(p);
                                 }
+                            });
+
+                            const sideLabel = sides.length > 0 ? `Added Side: ${sides.join(', ')}` : "";
+                            const fullNotes = [sideLabel, ...notes].filter(Boolean).join(' | ');
+                            const aggregatorKey = `${dishName}___${fullNotes}`;
+
+                            if (!currentGroup.dishAggregator[aggregatorKey]) {
+                                currentGroup.dishAggregator[aggregatorKey] = { name: dishName, count: 0, notes: fullNotes };
                             }
-
-                            if (dishName && !dishName.toLowerCase().includes('subtotal')) {
-                                currentGroup.subtotal += price;
-                                
-                                let sides = [];
-                                let notes = [];
-                                const noteParts = rawNotes.split(/[\|,]/);
-                                noteParts.forEach(part => {
-                                    const p = part.trim();
-                                    if (!p || p.toLowerCase().includes('for:')) return;
-                                    if (p.toLowerCase().includes('add side:')) {
-                                        const sideName = p.replace(/»?\s*Add Side:\s*/gi, '').trim();
-                                        sides.push(sideName);
-                                        currentGroup.sideAggregator[sideName] = (currentGroup.sideAggregator[sideName] || 0) + 1;
-                                    } else {
-                                        notes.push(p);
-                                    }
-                                });
-
-                                const sideLabel = sides.length > 0 ? `Added Side: ${sides.join(', ')}` : "";
-                                const fullNotes = [sideLabel, ...notes].filter(Boolean).join(' | ');
-                                const aggregatorKey = `${dishName}___${fullNotes}`;
-
-                                if (!currentGroup.dishAggregator[aggregatorKey]) {
-                                    currentGroup.dishAggregator[aggregatorKey] = { name: dishName, count: 0, notes: fullNotes };
-                                }
-                                currentGroup.dishAggregator[aggregatorKey].count += 1;
-                            }
+                            currentGroup.dishAggregator[aggregatorKey].count += 1;
                         }
                     }
                 });
@@ -300,22 +365,29 @@ const db = getFirestore(firebaseApp);
                 }
             }
 
-            console.log(`   🔙 Navigating back to main list...`);
-            await page.goBack();
-            await new Promise(r => setTimeout(r, 15000));
+            console.log(`   🔙 Returning to date list...`);
+            // If we used a direct link, we must go back or re-navigate to the date URL
+            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+            await new Promise(r => setTimeout(r, 8000));
 
-            if (sIdx < sessionButtons.length - 1) {
+            if (sIdx < sessionLinks.length - 1) {
                 console.log(`   🔄 Re-expanding row for next session...`);
                 await page.evaluate((d) => {
                     const dayRegex = new RegExp(d, 'i');
-                    const rows = Array.from(document.querySelectorAll('div, span, p, a, button'));
-                    const r = rows.find(el => dayRegex.test((el.innerText || "").trim()) && el.getBoundingClientRect().width > 200);
+                    const rows = Array.from(document.querySelectorAll('div, span, p, a, button, h1, h2, h3, h4'));
+                    const r = rows.find(el => {
+                        const txt = (el.innerText || "").trim();
+                        return dayRegex.test(txt) && el.getBoundingClientRect().width > 50;
+                    });
                     if (r) r.click();
                 }, date);
-                await new Promise(r => setTimeout(r, 8000));
+                await new Promise(r => setTimeout(r, 6000));
             }
         }
+    } catch (error) {
+        console.error(`❌ Error scraping date ${date}:`, error.message);
     }
+}
 
     console.log("🎉 Forkable Ingestion Complete!");
     await browser.close();
