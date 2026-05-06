@@ -24,8 +24,8 @@ const AUTH_FILE = './clubfeast_auth.json';
     console.log("🚀 Launching Chrome to scrape ClubFeast...");
     const browser = await puppeteer.launch({ 
       headless: "new",
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      defaultViewport: null
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1920,1080'],
+      defaultViewport: { width: 1920, height: 1080 }
     }); 
     const page = await browser.newPage();
   
@@ -85,63 +85,94 @@ const AUTH_FILE = './clubfeast_auth.json';
   
     console.log("\n🔍 Logging in successful! Detecting locations...");
     
-    // Detect all locations from the dropdown
-    let locations = await page.evaluate(() => {
-        const dropdownTrigger = document.querySelector('header div[style*="cursor: pointer"]');
-        if (!dropdownTrigger) return [];
-        
-        // Try to click to open if not already open (though we'll just look for the list if possible)
-        // For reliability, we'll look for elements that look like location items
-        const locationItems = Array.from(document.querySelectorAll('div')).filter(el => {
-            const text = el.innerText || "";
-            return (text.includes('Geary St') || text.includes('Tennessee St')) && el.parentElement?.style?.position === 'absolute';
-        });
-        
-        if (locationItems.length === 0) {
-            // Try to find the trigger and click it to see what happens
-            return ["Default"]; 
-        }
-        return locationItems.map(li => li.innerText.split('\n')[0].trim());
-    });
+    // Debug Screenshot
+    if (!fs.existsSync('./scratch')) fs.mkdirSync('./scratch');
+    await page.screenshot({ path: './scratch/clubfeast_before_click.png' });
 
-    // If we couldn't detect locations, just proceed with the current one
-    if (locations.length === 0) locations = ["Current Location"];
+    // 1. Force the dropdown to open and detect locations
+    const findLocations = async () => {
+        return await page.evaluate(() => {
+            const patterns = ['Geary St', 'Tennessee St'];
+            const allElements = Array.from(document.querySelectorAll('div, p, span, li, a, header *'));
+            const matches = allElements.filter(el => patterns.some(p => el.innerText?.includes(p)));
+            
+            return [...new Set(matches.map(el => {
+                const lines = el.innerText.split('\n').map(l => l.trim()).filter(l => l);
+                return lines.find(line => patterns.some(p => line.includes(p))) || lines[0];
+            }))].filter(t => t && t.length > 5);
+        });
+    };
+
+    let locations = await findLocations();
     
-    console.log(`📍 Detected ${locations.length} locations: ${locations.join(', ')}`);
+    // Set a more standard viewport to ensure consistent layout
+    await page.setViewport({ width: 1280, height: 800 });
+
+    if (locations.length <= 1) {
+        console.log("📍 Only 1 location seen. Attempting to open menu via keyboard (Focus + Enter)...");
+        
+        await page.evaluate(() => {
+            const header = document.querySelector('div.z-\\[100\\].btn.btn-lg.border.shadow[role="button"]') || 
+                           document.querySelector('[role="button"]');
+            if (header) {
+                header.focus();
+            }
+        });
+        await page.keyboard.press('Enter');
+        
+        await new Promise(r => setTimeout(r, 6000));
+        await page.screenshot({ path: './scratch/clubfeast_after_click.png' });
+        locations = await findLocations();
+    }
+
+    if (locations.length === 0) {
+        console.log("⚠️ No locations detected. Defaulting to 'Current Kitchen'.");
+        locations = ["Current Kitchen"];
+    } else {
+        console.log(`📍 Detected ${locations.length} kitchen locations: ${locations.join(', ')}`);
+    }
 
     let orderLinks = new Map();
 
     for (let locIdx = 0; locIdx < locations.length; locIdx++) {
         const locName = locations[locIdx];
-        console.log(`\n🏢 Switching to location: ${locName}...`);
         
-        if (locations.length > 1) {
-            await page.evaluate((idx) => {
-                const trigger = document.querySelector('header div[style*="cursor: pointer"]');
-                if (trigger) trigger.click();
-            }, locIdx);
-            await new Promise(r => setTimeout(r, 2000));
+        if (locations.length > 1 && locName !== "Current Kitchen") {
+            console.log(`\n🏢 Switching to kitchen: ${locName}...`);
             
-            const switched = await page.evaluate((idx) => {
-                const items = Array.from(document.querySelectorAll('div')).filter(el => {
-                    const text = el.innerText || "";
-                    return (text.includes('Geary St') || text.includes('Tennessee St')) && el.parentElement?.style?.position === 'absolute';
-                });
-                if (items[idx]) {
-                    items[idx].click();
+            // Ensure menu is open
+            await page.evaluate((name) => {
+                const isOpen = Array.from(document.querySelectorAll('button.flex.flex-col')).some(el => el.innerText?.includes('St'));
+                if (!isOpen) {
+                    const header = document.querySelector('div.z-\\[100\\].btn.btn-lg.border.shadow[role="button"]');
+                    if (header) header.focus();
+                }
+            }, locName);
+            await page.keyboard.press('Enter');
+            
+            await new Promise(r => setTimeout(r, 3000));
+
+            const switched = await page.evaluate((name) => {
+                const items = Array.from(document.querySelectorAll('button.flex.flex-col.gap-0.border-transparent.font-normal'));
+                const target = items.find(el => el.innerText && el.innerText.includes(name));
+                
+                if (target) {
+                    target.focus();
                     return true;
                 }
                 return false;
-            }, locIdx);
-            
+            }, locName);
+
             if (switched) {
-                console.log(`   └─ Switched to ${locName}. Waiting for load...`);
-                await new Promise(r => setTimeout(r, 8000));
+                await page.keyboard.press('Enter');
+                console.log(`   └─ Switch command sent via Keyboard. Waiting for dashboard to refresh...`);
+                await new Promise(r => setTimeout(r, 15000));
             }
         }
 
+
         // --- SCRAPE OPEN ORDERS ---
-        console.log(`   └─ Scraping 'Open' orders for ${locName}...`);
+        console.log(`   └─ Scraping 'Open' orders...`);
         await page.evaluate(() => {
             let clicked = false;
             function searchTabs(root) {
@@ -157,7 +188,7 @@ const AUTH_FILE = './clubfeast_auth.json';
             }
             searchTabs(document);
         });
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 5000));
 
         let openLinks = await page.evaluate(() => {
            let links = [];
@@ -178,7 +209,7 @@ const AUTH_FILE = './clubfeast_auth.json';
         console.log(`   └─ Found ${openLinks.length} 'Open' order routes.`);
 
         // --- SCRAPE FINALIZED ORDERS ---
-        console.log(`   └─ Scraping 'Finalized' orders for ${locName}...`);
+        console.log(`   └─ Scraping 'Finalized' orders...`);
         await page.evaluate(() => {
            let clicked = false;
            function searchTabs(root) {
@@ -214,7 +245,7 @@ const AUTH_FILE = './clubfeast_auth.json';
         });
         finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
         console.log(`   └─ Found ${finalizedLinks.length} 'Finalized' order routes.`);
-    }ed' order routes.`);
+    }
 
     let initialLinks = Array.from(orderLinks.keys());
     let idMap = {};
