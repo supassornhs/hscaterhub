@@ -5,6 +5,7 @@ import { collection, onSnapshot, addDoc, getDocs, deleteDoc, doc, updateDoc, set
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 let orders = [];
+let visibleOrdersCount = 50;
 let menuItems = [];
 const menuPlatforms = ['Cater2.me', 'ClubFeast', 'Direct', 'DoorDash', 'ezCater', 'Fooda', 'Foodja', 'Forkable', 'Hungry', 'Uber Eats', 'Zerocater'];
 
@@ -501,7 +502,13 @@ function renderOrders() {
     return keep;
   });
 
-  filteredOrders.forEach(order => {
+  const displayOrders = filteredOrders.slice(0, visibleOrdersCount);
+  const loadMoreContainer = document.getElementById('load-more-container');
+  if (loadMoreContainer) {
+    loadMoreContainer.style.display = filteredOrders.length > visibleOrdersCount ? 'block' : 'none';
+  }
+
+  displayOrders.forEach(order => {
     try {
       const dynamicStatus = computeOrderStatus(order);
       let statusClass = 'status-pending';
@@ -955,10 +962,15 @@ document.getElementById('menu-search-input').addEventListener('input', (e) => {
   renderMenus(document.getElementById('category-filter').value, e.target.value);
 });
 
-document.getElementById('orders-platform-filter')?.addEventListener('change', renderOrders);
-document.getElementById('orders-status-filter')?.addEventListener('change', renderOrders);
-document.getElementById('orders-start-date')?.addEventListener('change', renderOrders);
-document.getElementById('orders-end-date')?.addEventListener('change', renderOrders);
+document.getElementById('orders-platform-filter')?.addEventListener('change', () => { visibleOrdersCount = 50; renderOrders(); });
+document.getElementById('orders-status-filter')?.addEventListener('change', () => { visibleOrdersCount = 50; renderOrders(); });
+document.getElementById('orders-start-date')?.addEventListener('change', () => { visibleOrdersCount = 50; renderOrders(); });
+document.getElementById('orders-end-date')?.addEventListener('change', () => { visibleOrdersCount = 50; renderOrders(); });
+
+document.getElementById('load-more-btn')?.addEventListener('click', () => {
+  visibleOrdersCount += 50;
+  renderOrders();
+});
 // Init
 const dashStartEl = document.getElementById('dash-start-date');
 const dashEndEl = document.getElementById('dash-end-date');
