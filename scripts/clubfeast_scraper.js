@@ -19,11 +19,30 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 const AUTH_FILE = './clubfeast_auth.json';
+const DEFAULT_CHROME_EXECUTABLE = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CLUBFEAST_BRANCHES = [
+    { name: 'Geary', patterns: ['Geary St', 'Geary'] },
+    { name: 'Tennessee', patterns: ['Tennessee St', 'Tennessee'] },
+    { name: 'Palo Alto', patterns: ['Palo Alto'] }
+];
+
+function branchForLocation(locationName) {
+    const normalized = String(locationName || '').toLowerCase();
+    return CLUBFEAST_BRANCHES.find(branch =>
+        branch.patterns.some(pattern => normalized.includes(pattern.toLowerCase()))
+    )?.name || null;
+}
+
+function routeOrderId(route) {
+    const match = String(route || '').match(/\/(?:orders|packages)\/([^?#/]+)/i);
+    return match ? match[1].replace('#', '') : null;
+}
 
 (async () => {
     console.log("🚀 Launching Chrome to scrape ClubFeast...");
     const browser = await puppeteer.launch({ 
       headless: "new",
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || DEFAULT_CHROME_EXECUTABLE,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1920,1080'],
       defaultViewport: { width: 1920, height: 1080 }
     }); 
@@ -91,16 +110,28 @@ const AUTH_FILE = './clubfeast_auth.json';
 
     // 1. Force the dropdown to open and detect locations
     const findLocations = async () => {
-        return await page.evaluate(() => {
-            const patterns = ['Geary St', 'Tennessee St'];
-            const allElements = Array.from(document.querySelectorAll('div, p, span, li, a, header *'));
-            const matches = allElements.filter(el => patterns.some(p => el.innerText?.includes(p)));
-            
-            return [...new Set(matches.map(el => {
-                const lines = el.innerText.split('\n').map(l => l.trim()).filter(l => l);
-                return lines.find(line => patterns.some(p => line.includes(p))) || lines[0];
-            }))].filter(t => t && t.length > 5);
-        });
+        return await page.evaluate((branchDefinitions) => {
+            const allElements = Array.from(document.querySelectorAll('button, [role="button"], li, option, div, p, span, a'));
+            const found = [];
+
+            branchDefinitions.forEach(branch => {
+                const matches = allElements.map(el => ({
+                    el,
+                    text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+                })).filter(candidate =>
+                    candidate.text &&
+                    candidate.text.length <= 180 &&
+                    branch.patterns.some(pattern => candidate.text.toLowerCase().includes(pattern.toLowerCase()))
+                ).sort((left, right) => left.text.length - right.text.length);
+                const match = matches[0];
+
+                if (match) {
+                    found.push({ branch: branch.name, displayName: match.text });
+                }
+            });
+
+            return found;
+        }, CLUBFEAST_BRANCHES);
     };
 
     let locations = await findLocations();
@@ -126,49 +157,94 @@ const AUTH_FILE = './clubfeast_auth.json';
     }
 
     if (locations.length === 0) {
-        console.log("⚠️ No locations detected. Defaulting to 'Current Kitchen'.");
-        locations = ["Current Kitchen"];
+        console.error("❌ None of the expected ClubFeast branches were detected (Geary, Tennessee, Palo Alto).");
+        await browser.close();
+        process.exit(1);
     } else {
-        console.log(`📍 Detected ${locations.length} kitchen locations: ${locations.join(', ')}`);
+        const detectedBranches = new Set(locations.map(location => location.branch));
+        const missingBranches = CLUBFEAST_BRANCHES.map(branch => branch.name).filter(name => !detectedBranches.has(name));
+        console.log(`📍 Detected ${locations.length} kitchen locations: ${locations.map(location => `${location.branch} (${location.displayName})`).join(', ')}`);
+        if (missingBranches.length > 0) {
+            console.warn(`⚠️ Expected branches not visible in the location menu: ${missingBranches.join(', ')}`);
+        }
     }
 
     let orderLinks = new Map();
 
     for (let locIdx = 0; locIdx < locations.length; locIdx++) {
-        const locName = locations[locIdx];
+        const location = locations[locIdx];
+        const locName = location.displayName;
+        const branchName = location.branch || branchForLocation(locName);
+        let verifiedLocationName = locName;
         
-        if (locations.length > 1 && locName !== "Current Kitchen") {
-            console.log(`\n🏢 Switching to kitchen: ${locName}...`);
+        if (locations.length > 1) {
+            console.log(`\n🏢 Switching to ${branchName} kitchen: ${locName}...`);
             
             // Ensure menu is open
-            await page.evaluate((name) => {
-                const isOpen = Array.from(document.querySelectorAll('button.flex.flex-col')).some(el => el.innerText?.includes('St'));
-                if (!isOpen) {
-                    const header = document.querySelector('div.z-\\[100\\].btn.btn-lg.border.shadow[role="button"]');
-                    if (header) header.focus();
-                }
-            }, locName);
-            await page.keyboard.press('Enter');
-            
-            await new Promise(r => setTimeout(r, 3000));
+            const menuState = await page.evaluate((branchDefinitions) => {
+                const isOpen = Array.from(document.querySelectorAll('button')).some(el => {
+                    const text = (el.innerText || '').toLowerCase();
+                    return branchDefinitions.some(branch => branch.patterns.some(pattern => text.includes(pattern.toLowerCase())));
+                });
+                if (isOpen) return 'open';
 
-            const switched = await page.evaluate((name) => {
-                const items = Array.from(document.querySelectorAll('button.flex.flex-col.gap-0.border-transparent.font-normal'));
-                const target = items.find(el => el.innerText && el.innerText.includes(name));
+                const header = document.querySelector('div.z-\\[100\\].btn.btn-lg.border.shadow[role="button"]') ||
+                               document.querySelector('[role="button"]');
+                if (header) {
+                    header.focus();
+                    return 'focused';
+                }
+                return 'missing';
+            }, CLUBFEAST_BRANCHES);
+
+            if (menuState === 'focused') {
+                await page.keyboard.press('Enter');
+                await new Promise(r => setTimeout(r, 3000));
+            } else if (menuState === 'missing') {
+                console.warn(`   └─ Could not open the location menu; skipping ${branchName}.`);
+                continue;
+            }
+
+            const switched = await page.evaluate(({ name, branchDefinitions }) => {
+                const branch = branchDefinitions.find(definition => definition.name === name);
+                const items = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const matches = items.map(el => ({
+                    el,
+                    text: (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+                })).filter(candidate =>
+                    branch &&
+                    candidate.text &&
+                    branch.patterns.some(pattern => candidate.text.toLowerCase().includes(pattern.toLowerCase()))
+                ).sort((left, right) => left.text.length - right.text.length);
+                const target = matches[0]?.el;
                 
                 if (target) {
                     target.focus();
                     return true;
                 }
                 return false;
-            }, locName);
+            }, { name: branchName, branchDefinitions: CLUBFEAST_BRANCHES });
 
             if (switched) {
                 await page.keyboard.press('Enter');
                 console.log(`   └─ Switch command sent via Keyboard. Waiting for dashboard to refresh...`);
                 await new Promise(r => setTimeout(r, 15000));
+            } else {
+                console.warn(`   └─ Could not select ${branchName}; skipping this branch to avoid mislabeling orders.`);
+                continue;
             }
         }
+
+        verifiedLocationName = await page.evaluate(() => {
+            const header = document.querySelector('div.z-\\[100\\].btn.btn-lg.border.shadow[role="button"]');
+            return (header?.innerText || header?.textContent || '').replace(/\s+/g, ' ').trim();
+        });
+        const verifiedBranch = branchForLocation(verifiedLocationName);
+        if (verifiedBranch !== branchName) {
+            console.warn(`   └─ Active location verification failed for ${branchName}; header showed "${verifiedLocationName || 'unknown'}". Skipping to avoid mislabeling.`);
+            continue;
+        }
+        console.log(`   └─ Verified active branch: ${branchName} (${verifiedLocationName})`);
 
 
         // --- SCRAPE OPEN ORDERS ---
@@ -205,7 +281,7 @@ const AUTH_FILE = './clubfeast_auth.json';
            collectLinks(document);
            return links;
         });
-        openLinks.forEach(l => orderLinks.set(l, 'New'));
+        openLinks.forEach(link => orderLinks.set(`${branchName}::${link}`, { link, status: 'New', branch: branchName, locationName: verifiedLocationName }));
         console.log(`   └─ Found ${openLinks.length} 'Open' order routes.`);
 
         // --- SCRAPE FINALIZED ORDERS ---
@@ -243,38 +319,36 @@ const AUTH_FILE = './clubfeast_auth.json';
            collectLinks(document);
            return links;
         });
-        finalizedLinks.forEach(l => orderLinks.set(l, 'Completed'));
+        finalizedLinks.forEach(link => orderLinks.set(`${branchName}::${link}`, { link, status: 'Completed', branch: branchName, locationName: verifiedLocationName }));
         console.log(`   └─ Found ${finalizedLinks.length} 'Finalized' order routes.`);
     }
 
-    let initialLinks = Array.from(orderLinks.keys());
+    let initialLinks = Array.from(orderLinks.values());
     let idMap = {};
     let finalLinks = [];
 
-    for (let link of initialLinks) {
-        let idPart = link.includes('/orders/') ? link.split('/orders/')[1] : null;
-        if (!idPart && link.includes('/packages/')) idPart = link.split('/packages/')[1];
-        
-        if (idPart) {
-           let id = idPart.split('?')[0].replace('#', '');
-           if (!idMap[id]) idMap[id] = [];
-           idMap[id].push(link);
+    for (let routeRecord of initialLinks) {
+        const id = routeOrderId(routeRecord.link);
+        if (id) {
+           const branchOrderKey = `${routeRecord.branch}::${id}`;
+           if (!idMap[branchOrderKey]) idMap[branchOrderKey] = [];
+           idMap[branchOrderKey].push(routeRecord);
         } else {
-           finalLinks.push(link);
+           finalLinks.push(routeRecord);
         }
     }
 
-    for (let id in idMap) {
-        let links = idMap[id];
-        if (links.length > 1) {
-             let validLinks = links.filter(l => !l.includes("canceled=true") && !l.includes("cancelled=true"));
-             if (validLinks.length > 0) {
-                 finalLinks.push(validLinks[0]); 
+    for (let branchOrderKey in idMap) {
+        let records = idMap[branchOrderKey];
+        if (records.length > 1) {
+             let validRecords = records.filter(record => !record.link.includes("canceled=true") && !record.link.includes("cancelled=true"));
+             if (validRecords.length > 0) {
+                 finalLinks.push(validRecords[0]);
              } else {
-                 finalLinks.push(links[0]); 
+                 finalLinks.push(records[0]);
              }
         } else {
-             finalLinks.push(links[0]);
+             finalLinks.push(records[0]);
         }
     }
 
@@ -288,9 +362,11 @@ const AUTH_FILE = './clubfeast_auth.json';
     } catch(e) {}
   
     let syncedOrders = 0;
+    const syncedByBranch = Object.fromEntries(CLUBFEAST_BRANCHES.map(branch => [branch.name, 0]));
     for (let i = 0; i < finalLinks.length; i++) {
-        let route = finalLinks[i];
-        console.log(`[${i+1}/${finalLinks.length}] Navigating into ${route}...`);
+        const routeRecord = finalLinks[i];
+        const route = routeRecord.link;
+        console.log(`[${i+1}/${finalLinks.length}] [${routeRecord.branch}] Navigating into ${route}...`);
         await page.goto(route, { waitUntil: 'networkidle2' });
         
         try {
@@ -298,7 +374,11 @@ const AUTH_FILE = './clubfeast_auth.json';
         } catch (e) {}
         await new Promise(r => setTimeout(r, 4000));
         
-        const routeId = route.split('/orders/')[1].split('?')[0];
+        const routeId = routeOrderId(route);
+        if (!routeId) {
+            console.warn(`   └─ Could not identify order ID from ${route}. Skipping.`);
+            continue;
+        }
         const orderDataRaw = await page.evaluate((forcedId) => {
             function collectText(root) {
               let text = '';
@@ -439,6 +519,9 @@ const AUTH_FILE = './clubfeast_auth.json';
             let newOrder = {
                 id: orderDataRaw.id,
                 platform: "ClubFeast",
+                branch: routeRecord.branch,
+                location: routeRecord.branch,
+                sourceLocationName: routeRecord.locationName,
                 customerName: orderDataRaw.customerName,
                 typeOfOrder: "Catering",
                 deliveryDate: orderDataRaw.deliveryDate,
@@ -449,7 +532,7 @@ const AUTH_FILE = './clubfeast_auth.json';
                 total: orderDataRaw.total,
                 netPayout: orderDataRaw.subtotal,
                 status: currentStatus,
-                overallNotes: "Automatically scraped via Puppeteer.",
+                overallNotes: `Automatically scraped via Puppeteer. ClubFeast branch: ${routeRecord.branch}.`,
                 items: finalItems,
                 createdAt: new Date().toISOString()
             };
@@ -461,16 +544,24 @@ const AUTH_FILE = './clubfeast_auth.json';
                 continue;
             }
             await setDoc(docRef, newOrder, { merge: true });
-            console.log(`   └─ Successfully saved ${newOrder.id} with status ${newOrder.status}`);
+            console.log(`   └─ Successfully saved ${newOrder.id} for ${newOrder.branch} with status ${newOrder.status}`);
             syncedOrders++;
+            syncedByBranch[routeRecord.branch] = (syncedByBranch[routeRecord.branch] || 0) + 1;
         } else {
             console.log("   └─ Failed to isolate order frame. Skipping.");
         }
     }
     
-    await setDoc(doc(db, 'system', 'crawlers'), { 'ClubFeast': { status: 'Active', lastRun: new Date().toLocaleString() } }, { merge: true });
+    await setDoc(doc(db, 'system', 'crawlers'), {
+        'ClubFeast': {
+            status: 'Active',
+            lastRun: new Date().toLocaleString(),
+            lastPullByBranch: syncedByBranch
+        }
+    }, { merge: true });
 
     console.log(`\n🎉 Successfully Synced ${syncedOrders} ClubFeast orders to the Hub!`);
+    console.log(`📊 Branch totals: ${Object.entries(syncedByBranch).map(([branch, count]) => `${branch}=${count}`).join(', ')}`);
     await browser.close();
     process.exit(0);
 })();
