@@ -1,0 +1,81 @@
+query PickupsForVenueAndVenues($venueId: Int!, $weekOf: Date!) {
+  pickupsForVenue(venueId: $venueId, weekOf: $weekOf) {
+    id
+    forPickupAt
+    pickupTimeAt
+    balanceWithoutChangeRequests
+    balanceWithChangeRequests
+    serviceWindow {
+      name
+    }
+    venue {
+      id
+      name
+      displayName
+      paymentFrequency
+      legacyInfo
+      market {
+        name
+      }
+      pickupInfo {
+        formattedAddress
+      }
+    }
+    totalByOrderType {
+      totalSubTotalWithChangeRequest
+      totalSubTotalPreChangeRequest
+    }
+    orders {
+      id
+      totalItems
+      pieces {
+        id
+        name
+        price
+        attributes {
+          label
+          value
+        }
+      }
+      delivery {
+        id
+      }
+      tableware {
+        utensils {
+          enabled
+        }
+      }
+    }
+    changeRequests {
+      isPending
+    }
+  }
+  me {
+    venueOwners {
+      venues {
+        id
+        name
+        displayName
+        market {
+          name
+        }
+        pickupInfo {
+          formattedAddress
+        }
+      }
+    }
+    venueMemberships {
+      venues {
+        id
+        name
+        displayName
+        market {
+          name
+        }
+        pickupInfo {
+          formattedAddress
+        }
+      }
+    }
+  }
+}

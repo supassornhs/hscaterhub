@@ -1,0 +1,4 @@
+// Intentionally hardcoded for the current extraction prototype.
+// When this expires, extraction must stop. Login/refresh automation is paused.
+export const CLUBFEAST_BEARER_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJyZXN0YXVyYW50X2lkIjozOTA0LCJzY29wZSI6InVzZXIiLCJlbnYiOiJwcm9kdWN0aW9uIiwiaXNzdWVkX2F0IjoiMjAyNi0wOC0yMSAwMToxNjowOCAtMDcwMCIsImlzc3VlZF9mb3IiOiJwYWRwYWRAaG9seXNocmVkLmNvIiwic2Vzc2lvbl9pZCI6MjIwOTIyfQ.aj5FnHgyoO4Jx4vJfpDAzybKlFCbtCAZMSFfgk9Nsac";
+export const CLUBFEAST_RESTAURANT_ID = 3904;

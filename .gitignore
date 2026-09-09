@@ -1,5 +1,6 @@
 node_modules
 .env
 clubfeast_auth.json
+scratch/clubfeast_latest_raw.json
 dist
 .DS_Store

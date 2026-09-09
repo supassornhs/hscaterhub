@@ -9,7 +9,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "sync-forkable": "node scripts/forkable_scraper.js",
-    "sync-emails": "node scripts/email_scraper.js"
+    "sync-emails": "node scripts/email_scraper.js",
+    "extract-forkable": "FORKABLE_RAW_OUT=scratch/forkable_latest_raw.json node automations/forkable/forkable_graphql_probe.js && node automations/forkable/forkable_export.js scratch/forkable_latest_raw.json",
+    "extract-forkable-projections": "node automations/forkable/forkable_schedule.js",
+    "extract-clubfeast": "node automations/clubfeast/clubfeast_extract.js",
+    "test:clubfeast": "node --test automations/clubfeast/clubfeast_api.test.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
